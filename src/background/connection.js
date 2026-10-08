@@ -1,5 +1,5 @@
-import { FLOW_CONTENT_SCRIPT, isFlowUrl } from './flow-bridge.js';
-import { ERROR_CODES, toErrorPayload } from '../utils/errors.js';
+import { attachConnector, isFlowUrl, isNoReceiverError, RELOAD_TAB_MESSAGE } from './flow-bridge.js';
+import { AutomationError, ERROR_CODES, toErrorPayload } from '../utils/errors.js';
 import { withTimeout } from '../utils/async.js';
 import { FLOW_TARGET } from '../shared/protocol.js';
 
@@ -33,7 +33,11 @@ export async function checkFlowConnection({ chromeApi = globalThis.chrome, now =
     };
   } catch (error) {
     const payload = toErrorPayload(error);
-    return notConnected(tab.id, tab.url, `Flow is open but did not respond: ${payload.message}`, checkedAt);
+    const message =
+      payload.code === ERROR_CODES.FLOW_NO_RESPONSE
+        ? payload.message
+        : `Flow is open, but it did not answer: ${payload.message}`;
+    return notConnected(tab.id, tab.url, message, checkedAt);
   }
 }
 
@@ -43,12 +47,19 @@ async function askTab(chromeApi, tabId, cmd) {
   try {
     reply = await withTimeout(send(), 4000, 'Flow did not respond.');
   } catch (error) {
-    if (!/receiving end|establish connection|message port/i.test(String(error?.message ?? error))) throw error;
-    await chromeApi.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: [FLOW_CONTENT_SCRIPT] });
-    reply = await withTimeout(send(), 4000, 'Flow did not respond after reloading the connector.');
+    if (!isNoReceiverError(error)) throw error;
+    // No connector in this tab: it was open before the extension was loaded or reloaded.
+    await attachConnector(chromeApi, tabId);
+    try {
+      reply = await withTimeout(send(), 4000, 'Flow did not respond after attaching.');
+    } catch {
+      throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, RELOAD_TAB_MESSAGE);
+    }
   }
   if (!reply?.ok) {
-    throw Object.assign(new Error(reply?.error?.message ?? 'Flow did not respond.'), { code: reply?.error?.code ?? ERROR_CODES.FLOW_NO_RESPONSE });
+    throw Object.assign(new Error(reply?.error?.message ?? 'Flow did not respond.'), {
+      code: reply?.error?.code ?? ERROR_CODES.FLOW_NO_RESPONSE,
+    });
   }
   return reply.data;
 }

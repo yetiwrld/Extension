@@ -89,7 +89,7 @@ test('connection reads "Connected" only when the active tab is Flow and its conn
 
   const silent = await checkFlowConnection({ chromeApi: fakeChrome({ respond: false }) });
   assert.equal(silent.status, 'not_connected');
-  assert.match(silent.message, /did not respond/);
+  assert.match(silent.message, /Reload the Flow tab/);
 });
 
 test('the bridge reports a closed tab as FLOW_TAB_CLOSED so the queue pauses instead of failing', async () => {

@@ -226,6 +226,7 @@ show that the live Flow page matches the synthetic one.
 ## Troubleshooting
 
 - **○ Not Connected:** the active tab must be a Flow page. Open the project and press Check Flow page.
+- **"Could not connect to this Flow tab":** the Flow tab was open before the extension was loaded or reloaded, and the extension could not attach to it. Reload the Flow tab (F5), then press Check Flow page. After reloading the extension in `chrome://extensions`, close and reopen the side panel as well.
 - **Flow prompt box not found:** open a project and keep the prompt box visible.
 - **A check in Check Flow page fails:** see [`docs/flow-adapter.md`](docs/flow-adapter.md).
 - **Start is disabled:** the header of the Queue section names the first blocking problem.

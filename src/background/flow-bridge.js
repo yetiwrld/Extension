@@ -10,6 +10,28 @@ import { FLOW_COMMANDS, FLOW_PORT_METHODS, FLOW_TARGET } from '../shared/protoco
 
 export const FLOW_CONTENT_SCRIPT = 'content/content-script.js';
 
+/** Shown when the connector cannot be reached even after it has been injected. */
+export const RELOAD_TAB_MESSAGE = 'Could not connect to this Flow tab. Reload the Flow tab (press F5) and try again.';
+
+const NO_RECEIVER = /receiving end does not exist|could not establish connection|message port closed/i;
+
+/** True when Chrome reports that no content script is listening in the tab. */
+export function isNoReceiverError(error) {
+  return NO_RECEIVER.test(String(error?.message ?? error));
+}
+
+/**
+ * Inject the Flow connector into the top frame of a tab. Used when the tab was open before the
+ * extension was loaded or reloaded. Throws a user-facing error if Chrome refuses.
+ */
+export async function attachConnector(chromeApi, tabId) {
+  try {
+    await chromeApi.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: [FLOW_CONTENT_SCRIPT] });
+  } catch {
+    throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, RELOAD_TAB_MESSAGE);
+  }
+}
+
 export function isFlowUrl(url) {
   if (!url) return false;
   try {
@@ -21,8 +43,6 @@ export function isFlowUrl(url) {
     return false;
   }
 }
-
-const NO_RECEIVER = /receiving end does not exist|could not establish connection|message port closed/i;
 
 /**
  * @param {object} options
@@ -53,19 +73,16 @@ export function createFlowBridge({ getTabId, chromeApi = globalThis.chrome, time
     try {
       return await chromeApi.tabs.sendMessage(tabId, message, { frameId: 0 });
     } catch (error) {
-      if (!NO_RECEIVER.test(String(error?.message ?? error))) {
+      if (!isNoReceiverError(error)) {
         throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, `Flow did not respond (${error?.message ?? 'no response'}).`);
       }
-      // The page was open before the extension was installed or updated. Inject once and retry.
-      try {
-        await chromeApi.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: [FLOW_CONTENT_SCRIPT] });
-      } catch (injectError) {
-        throw new AutomationError(
-          ERROR_CODES.FLOW_NO_RESPONSE,
-          `Could not attach to the Flow page (${injectError?.message ?? 'injection failed'}). Reload the Flow tab.`,
-        );
-      }
-      return chromeApi.tabs.sendMessage(tabId, message, { frameId: 0 });
+    }
+    // The page was open before the extension was loaded or reloaded: attach, then retry once.
+    await attachConnector(chromeApi, tabId);
+    try {
+      return await chromeApi.tabs.sendMessage(tabId, message, { frameId: 0 });
+    } catch {
+      throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, RELOAD_TAB_MESSAGE);
     }
   }
 
