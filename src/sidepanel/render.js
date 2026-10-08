@@ -206,7 +206,7 @@ function renderChip(scene, ref) {
   }
   if (ref.status === 'missing') {
     return `<span class="chip is-missing"><span class="chip-icon">✕</span>${esc(ref.token)}</span>
-      <button type="button" class="btn btn-secondary btn-sm" data-action="add-refs" data-scene="${sceneNumber}" data-token="${esc(ref.token)}">Add ${esc(ref.token)}</button>`;
+      <button type="button" class="btn btn-secondary btn-sm" data-action="add-refs" data-scene="${sceneNumber}" data-token="${esc(ref.token)}" aria-label="Add reference for ${esc(ref.token)}">Add reference</button>`;
   }
   return `<span class="chip is-ambiguous"><span class="chip-icon">\u26a0</span>${esc(ref.token)}</span>`;
 }
