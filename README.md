@@ -160,14 +160,14 @@ License 1.1:
   reference filenames, status labels, settings, the activity log and error messages.
 
 The Latin subsets are in `src/sidepanel/fonts/` as `.woff2` files, with the licence texts beside them
-(`LICENSE-DM-Sans.txt` and `LICENSE-Inter.txt`). Nothing is loaded from a CDN, and nothing depends on
-fonts installed on the computer. `src/sidepanel/typography.css` defines the families, the four-step
+(`LICENSE-DM-Sans.txt` and `LICENSE-Inter.txt`). Nothing is loaded from a CDN. Text does not depend on
+fonts installed on the computer; system fonts are fallbacks only. `src/sidepanel/typography.css` defines the families, the four-step
 size scale (12, 13, 14 and 16 px), the line height and the weights as CSS variables, each with a
 system fallback. Components use those variables and never name a font directly.
 
 Text colours meet WCAG AA contrast (4.5:1) on every panel surface, and `test/typography.test.js`
-checks each one. Every option of every Flow setting is measured against its dropdown at 320, 400
-and 560 px, so a value is never cut off with an ellipsis.
+checks each one. The browser harness measures every option of every Flow setting against its
+dropdown at 320, 400 and 560 px, so a cut-off value shows up as a failed check.
 
 ## Architecture
 
