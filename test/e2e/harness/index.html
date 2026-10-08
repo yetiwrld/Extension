@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Flow Scene Queue: browser harness</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+      #wrap { display: flex; height: 100vh; width: 100vw; }
+      #flow { flex: 1 1 auto; min-width: 0; border: 0; height: 100%; background: #0b0b0c; }
+      #panel { flex: 0 0 var(--panel-w, 400px); width: var(--panel-w, 400px); height: 100%; border: 0; border-left: 1px solid #26262b; }
+    </style>
+    <script src="/harness/stub.js"></script>
+  </head>
+  <body>
+    <div id="wrap">
+      <iframe id="flow" src="/flow-frame.html" title="Flow page (synthetic)"></iframe>
+      <iframe id="panel" src="/panel-frame.html" title="Side panel"></iframe>
+    </div>
+    <script type="module" src="/dist/background/service-worker.js"></script>
+  </body>
+</html>

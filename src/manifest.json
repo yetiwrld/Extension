@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Flow Scene Queue",
+  "short_name": "Flow Queue",
+  "version": "1.0.0",
+  "description": "Queue scenes from a document into Google Flow and generate them one at a time, waiting for each to finish. Uses your existing Flow session.",
+  "minimum_chrome_version": "116",
+  "permissions": ["sidePanel", "storage", "scripting"],
+  "host_permissions": [
+    "https://flow.google.com/*",
+    "https://labs.google/fx/tools/flow*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/index.html"
+  },
+  "action": {
+    "default_title": "Open Flow Scene Queue",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://flow.google.com/*", "https://labs.google/fx/tools/flow*"],
+      "js": ["content/content-script.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Flow (synthetic test page)</title>
+    <style>
+      /* Layout only: gives the synthetic controls real boxes so visibility checks behave as on a page. */
+      html, body { margin: 0; background: #0b0b0c; color: #f1f1f2; font: 14px system-ui, sans-serif; height: 100%; }
+      main { display: grid; grid-template-rows: auto 1fr auto; height: 100vh; padding: 16px; box-sizing: border-box; gap: 12px; }
+      .top button { padding: 6px 10px; }
+      #results { display: flex; flex-wrap: wrap; gap: 12px; align-content: flex-start; overflow: auto; min-height: 0; }
+      #results img { width: 180px; height: 180px; background: #2a2a31; border-radius: 8px; }
+      #results .progress { width: 180px; height: 12px; background: #3a3a41; border-radius: 6px; }
+      #results [role="alert"] { color: #f08a8a; padding: 8px; }
+      .prompt-box { position: relative; border: 1px solid #3a3a41; border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: #141416; }
+      .refs { display: flex; gap: 8px; flex-wrap: wrap; }
+      .chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #3a3a41; border-radius: 8px; padding: 4px; }
+      .chip img { width: 40px; height: 40px; background: #2a2a31; border-radius: 4px; }
+      .controls-row { display: flex; gap: 8px; align-items: center; }
+      textarea, .editor { width: 100%; min-height: 72px; background: #0f0f11; color: #f1f1f2; border: 1px solid #3a3a41; border-radius: 8px; padding: 8px; box-sizing: border-box; font: inherit; }
+      .editor { white-space: pre-wrap; }
+      #generate { align-self: flex-end; padding: 8px 14px; }
+      [role="menu"] { position: fixed; right: 16px; bottom: 140px; background: #1b1b1e; border: 1px solid #3a3a41; border-radius: 10px; padding: 8px; min-width: 200px; display: flex; flex-direction: column; gap: 4px; z-index: 10; }
+      [role="menu"] [role="menuitemradio"], [role="menu"] [role="menuitem"] { padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+      [role="menu"] [role="menuitemradio"][aria-checked="true"] { background: #2a2a31; }
+      [role="menu"] h3 { font-size: 11px; color: #9d9da6; margin: 6px 0 2px; text-transform: uppercase; letter-spacing: .06em; }
+    </style>
+  </head>
+  <body>
+    <script>
+      // The content script registers its listener on this stub, as it would on chrome.runtime.onMessage.
+      window.chrome = { runtime: { onMessage: { addListener: function (fn) { (window.__fsqListeners = window.__fsqListeners || []).push(fn); } } } };
+    </script>
+    <script src="/dist/content/content-script.js"></script>
+    <script type="module">
+      import { installFlowFixture } from '/fixture/flow-fixture.js';
+      const variant = location.hash === '#rich' ? 'contenteditable' : 'textarea';
+      const fixture = installFlowFixture(window, { variant: variant });
+      window.__fixture = fixture;
+      window.__generations = [];
+      window.__failOn = [];      // 1-based generation numbers that Flow reports as failed
+      window.__delayMs = 2500;   // how long a synthetic generation takes
+      fixture.generateBtn.addEventListener('click', function () {
+        if (fixture.generateBtn.disabled) return;
+        const index = window.__generations.length + 1;
+        window.__generations.push({
+          index: index,
+          prompt: fixture.promptEl.value || fixture.promptEl.textContent,
+          refs: fixture.state.references.slice(),
+          mode: fixture.state.mode,
+          model: fixture.state.model,
+          aspectRatio: fixture.state.aspectRatio,
+        });
+        setTimeout(function () {
+          if (window.__failOn.indexOf(index) >= 0) fixture.failGeneration('Flow could not generate this image. Try a different prompt.');
+          else fixture.finishGeneration();
+        }, window.__delayMs);
+      });
+    </script>
+    <main>
+      <header class="top"><button type="button" aria-label="Create new project">New project</button></header>
+      <section id="results-host"></section>
+    </main>
+  </body>
+</html>

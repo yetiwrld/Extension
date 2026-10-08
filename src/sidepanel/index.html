@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Flow Scene Queue</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-name">Flow Scene Queue</span>
+          <span class="brand-sub">Google Flow</span>
+        </div>
+        <div id="region-connection" class="connection" aria-live="polite"></div>
+      </header>
+
+      <div id="region-notice" aria-live="polite"></div>
+
+      <section class="card" id="region-flow-settings" aria-labelledby="h-flow-settings"></section>
+
+      <section class="card" aria-labelledby="h-document">
+        <div class="card-head">
+          <h2 id="h-document">Scene document</h2>
+          <div id="region-document-count"></div>
+        </div>
+        <label class="field">
+          <span class="field-label">Paste scenes with [Scene N] markers</span>
+          <textarea id="doc-input" rows="9" spellcheck="false" placeholder="[Scene 1]&#10;Describe the first image or video.&#10;Reference images: Aron.png"></textarea>
+        </label>
+        <div class="row">
+          <button type="button" class="btn btn-primary" data-action="analyze">Analyze scenes</button>
+          <button type="button" class="btn btn-ghost" data-action="load-example">Load example</button>
+        </div>
+        <div id="region-document-issues"></div>
+      </section>
+
+      <section class="card" aria-labelledby="h-library">
+        <div class="card-head">
+          <h2 id="h-library">Reference library</h2>
+          <div id="region-library-count"></div>
+        </div>
+        <p class="muted small">Files are matched by exact filename (case-insensitive by default). Images stay in this browser.</p>
+        <div class="row">
+          <button type="button" class="btn btn-secondary" data-action="add-refs">Add images</button>
+        </div>
+        <input type="file" id="ref-input" accept="image/*" multiple hidden />
+        <div id="region-library"></div>
+      </section>
+
+      <section class="card" aria-labelledby="h-queue">
+        <div class="card-head">
+          <h2 id="h-queue">Queue</h2>
+          <div id="region-queue-counts"></div>
+        </div>
+        <div id="region-queue-blockers"></div>
+        <div id="region-queue"></div>
+      </section>
+
+      <section class="card" aria-labelledby="h-automation">
+        <div class="card-head">
+          <h2 id="h-automation">Automation</h2>
+          <div id="region-phase"></div>
+        </div>
+        <div id="region-automation"></div>
+      </section>
+
+      <section class="card" aria-labelledby="h-settings">
+        <div class="card-head">
+          <h2 id="h-settings">Settings</h2>
+        </div>
+        <div id="region-settings"></div>
+      </section>
+
+      <section class="card card-log" aria-labelledby="h-log">
+        <div class="card-head">
+          <h2 id="h-log">Activity log</h2>
+          <div id="region-log-count"></div>
+        </div>
+        <div id="region-log"></div>
+      </section>
+    </div>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
