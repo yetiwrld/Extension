@@ -100,6 +100,73 @@ const flow = async () => {
   return handle.contentFrame();
 };
 
+/** What the panel renders: loaded font faces, the family each text element uses, monospace, and the smallest text. */
+async function typographyReport(frame) {
+  return frame.evaluate(async () => {
+    await document.fonts.ready;
+    const clean = (name) => name.replace(/["']/g, '').trim();
+    const faces = [...document.fonts];
+    const loaded = faces.filter((face) => face.status === 'loaded').map((face) => `${clean(face.family)} ${face.weight}`);
+    const failed = faces.filter((face) => face.status === 'error').map((face) => `${clean(face.family)} ${face.weight}`);
+    const offFamily = [];
+    const monospace = [];
+    let smallest = Infinity;
+    let smallestAt = '';
+    for (const el of document.querySelectorAll('.app *')) {
+      const hasText = [...el.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+      if (!hasText || el.getClientRects().length === 0) continue;
+      const style = getComputedStyle(el);
+      const first = clean(style.fontFamily.split(',')[0]);
+      const where = `${el.tagName.toLowerCase()}.${el.className}`;
+      if (first !== 'Inter' && first !== 'DM Sans') offFamily.push(`${where}: ${style.fontFamily}`);
+      if (/monospace/i.test(style.fontFamily)) monospace.push(where);
+      const size = parseFloat(style.fontSize);
+      if (size < smallest) {
+        smallest = size;
+        smallestAt = where;
+      }
+    }
+    return { loaded, failed, offFamily: offFamily.slice(0, 5), monospace, smallest, smallestAt };
+  });
+}
+
+// Every option of every Flow setting must fit its box in full. Ellipsis truncation is not
+// overflow, so the overflow checks cannot see it. Chrome sizes an auto-width select to its
+// widest option, so a hidden copy showing one option gives the width that option needs, and
+// that is compared with the real select's box. Both numbers come from Chrome's own layout.
+async function settingsFit(frame) {
+  return frame.evaluate(() => {
+    const probe = document.createElement('select');
+    probe.setAttribute('aria-hidden', 'true');
+    probe.style.cssText = 'position:absolute;left:0;top:0;visibility:hidden;width:auto;';
+    document.body.append(probe);
+    const misses = [];
+    const report = [];
+    let measured = 0;
+    try {
+      for (const select of document.querySelectorAll('select[data-setting]')) {
+        if (!select.options.length) continue;
+        measured += 1;
+        const box = select.getBoundingClientRect().width;
+        const columns = getComputedStyle(select.closest('.field-grid')).gridTemplateColumns;
+        const needs = [];
+        for (const option of select.options) {
+          probe.replaceChildren(new Option(option.text));
+          const needed = probe.getBoundingClientRect().width;
+          needs.push(`${option.text}=${Math.ceil(needed)}`);
+          if (needed > box) {
+            misses.push(`${select.dataset.setting} "${option.text}" needs ${Math.ceil(needed)}px, box is ${Math.floor(box)}px`);
+          }
+        }
+        report.push(`${select.dataset.setting}: box ${Math.floor(box)}px in [${columns}]; needs ${needs.join(', ')}`);
+      }
+    } finally {
+      probe.remove();
+    }
+    return { measured, misses, report };
+  });
+}
+
 async function waitFor(fn, { timeout = 30000, interval = 250, label = 'condition' } = {}) {
   const started = Date.now();
   for (;;) {
@@ -227,6 +294,20 @@ try {
       return { scrollOverflow: doc.scrollWidth - doc.clientWidth, offenders: offenders.slice(0, 5) };
     });
     check(`no horizontal overflow: ${layout.name}`, overflow.scrollOverflow <= 0 && overflow.offenders.length === 0, JSON.stringify(overflow));
+    const typo = await typographyReport(panelFrame);
+    check(
+      `fonts load, and every panel text uses Inter or DM Sans: ${layout.name}`,
+      typo.failed.length === 0 &&
+        typo.loaded.some((face) => face.startsWith('Inter ')) &&
+        typo.loaded.some((face) => face.startsWith('DM Sans ')) &&
+        typo.offFamily.length === 0,
+      JSON.stringify({ loaded: typo.loaded, failed: typo.failed, offFamily: typo.offFamily }),
+    );
+    check(
+      `no monospace text, and nothing below 12px: ${layout.name}`,
+      typo.monospace.length === 0 && typo.smallest >= 12,
+      `${typo.smallest}px at ${typo.smallestAt}`,
+    );
     const handle = await page.$('#panel');
     await handle.screenshot({ path: join(shots, `panel-${layout.viewport[0]}x${layout.viewport[1]}-${layout.panel}px.png`) });
   }
@@ -258,6 +339,52 @@ try {
     return values.includes('mode=Image') && values.includes('model=Nano Banana Pro') && values.includes('aspectRatio=16:9') ? values : null;
   }, { timeout: 20000, label: 'Flow settings shown' }).catch(() => null);
   check('Flow settings appear in the panel without a manual read', Boolean(settingsShown), settingsShown ? settingsShown.join(' ') : 'not shown');
+
+  // Typography with the queue, references and settings on screen, at narrow and wide widths.
+  for (const width of [320, 400, 560]) {
+    await page.evaluate((w) => document.documentElement.style.setProperty('--panel-w', `${w}px`), width);
+    await sleep(400);
+    const shotFrame = await panel();
+    const report = await typographyReport(shotFrame);
+    const overflowNow = await shotFrame.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    check(
+      `typography holds with the queue, references and settings on screen (${width}px)`,
+      report.failed.length === 0 && report.offFamily.length === 0 && report.monospace.length === 0 && report.smallest >= 12 && overflowNow <= 0,
+      JSON.stringify({ failed: report.failed, offFamily: report.offFamily, smallest: `${report.smallest}px at ${report.smallestAt}`, overflow: overflowNow }),
+    );
+    const fit = await settingsFit(shotFrame);
+    check(
+      `every Flow setting option fits its box in full (${width}px)`,
+      fit.measured >= 3 && fit.misses.length === 0,
+      JSON.stringify({ measured: fit.measured, misses: fit.misses.slice(0, 5) }),
+    );
+    // The panel fills the viewport height, so a taller viewport shows the whole queue in one image.
+    await page.setViewport({ width: 1440, height: 2600 });
+    await sleep(300);
+    const handle = await page.$('#panel');
+    await handle.screenshot({ path: join(shots, `queue-${width}px.png`) });
+  }
+  // Self-test: the fit measurement must catch a cut-off value. Force the old three equal
+  // columns at 560px (where the model name was cut off) and expect the measurement to flag it.
+  const selfTestFrame = await panel();
+  await selfTestFrame.evaluate(() => {
+    const style = document.createElement('style');
+    style.id = 'selftest-old-columns';
+    style.textContent = '.field-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}';
+    document.head.append(style);
+  });
+  await sleep(300);
+  const forced = await settingsFit(selfTestFrame);
+  await selfTestFrame.evaluate(() => document.getElementById('selftest-old-columns')?.remove());
+  check(
+    'the fit measurement flags a cut-off model name when the old columns are forced (self-test)',
+    forced.misses.some((miss) => miss.startsWith('model ')),
+    JSON.stringify({ misses: forced.misses.slice(0, 3), report: forced.report }),
+  );
+  await page.setViewport({ width: 1440, height: 900 });
+  await page.evaluate(() => document.documentElement.style.setProperty('--panel-w', '400px'));
+  await sleep(300);
+  panelFrame = await panel();
 
   // ---- 4. Full run: sequential, correct references, real completion ----------
   const flowFrame = await flow();

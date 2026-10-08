@@ -50,6 +50,8 @@ async function copyStaticAssets() {
   await copyFile(join(src, 'manifest.json'), join(dist, 'manifest.json'));
   await copyFile(join(src, 'sidepanel', 'index.html'), join(dist, 'sidepanel', 'index.html'));
   await copyFile(join(src, 'sidepanel', 'sidepanel.css'), join(dist, 'sidepanel', 'sidepanel.css'));
+  await copyFile(join(src, 'sidepanel', 'typography.css'), join(dist, 'sidepanel', 'typography.css'));
+  await cp(join(src, 'sidepanel', 'fonts'), join(dist, 'sidepanel', 'fonts'), { recursive: true });
   await cp(join(src, 'icons'), join(dist, 'icons'), { recursive: true });
 }
 

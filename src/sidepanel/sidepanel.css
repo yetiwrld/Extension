@@ -13,7 +13,7 @@
   --border-strong: #3a3a41;
   --text: #f1f1f2;
   --muted: #9d9da6;
-  --faint: #6d6d76;
+  --faint: #8a8a94;
   --white: #ffffff;
   --ok: #8fd6a4;
   --warn: #f0cd6b;
@@ -22,7 +22,6 @@
   --radius-input: 8px;
   --radius-button: 7px;
   --radius-card: 10px;
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color-scheme: dark;
 }
 
@@ -38,9 +37,9 @@ body {
   padding: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 13px;
-  line-height: 1.45;
+  font-family: var(--font-text);
+  font-size: var(--text-sm);
+  line-height: var(--leading);
   overflow-x: hidden;
   min-width: 0;
   -webkit-font-smoothing: antialiased;
@@ -48,6 +47,13 @@ body {
 
 body {
   min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-text);
 }
 
 [hidden] {
@@ -82,15 +88,16 @@ body {
 }
 
 .brand-name {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0;
   overflow-wrap: anywhere;
 }
 
 .brand-sub {
   color: var(--faint);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .connection {
@@ -103,8 +110,8 @@ body {
 }
 
 .conn-state {
-  font-weight: 600;
-  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 
@@ -118,7 +125,7 @@ body {
 
 .conn-detail {
   color: var(--faint);
-  font-size: 11px;
+  font-size: var(--text-xs);
   max-width: 100%;
   overflow-wrap: anywhere;
 }
@@ -147,17 +154,18 @@ body {
 
 h2 {
   margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0;
   color: var(--muted);
 }
 
 h3 {
   margin: 0;
-  font-size: 13px;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
   overflow-wrap: anywhere;
 }
 
@@ -170,12 +178,7 @@ h3 {
 }
 
 .small {
-  font-size: 12px;
-}
-
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px;
+  font-size: var(--text-xs);
 }
 
 .row {
@@ -197,7 +200,7 @@ h3 {
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 1px 7px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -209,7 +212,7 @@ h3 {
   border-radius: 6px;
   padding: 2px 8px;
   border: 1px solid var(--border-strong);
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -244,7 +247,7 @@ h3 {
 }
 
 .field-label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--muted);
   letter-spacing: 0.02em;
 }
@@ -261,7 +264,7 @@ textarea {
   border-radius: var(--radius-input);
   padding: 7px 9px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-sm);
   outline: none;
 }
 
@@ -278,7 +281,7 @@ select:disabled {
 textarea {
   resize: vertical;
   min-height: 120px;
-  line-height: 1.5;
+  line-height: var(--leading);
 }
 
 input:focus-visible,
@@ -296,9 +299,12 @@ textarea:focus {
   border-color: #6a6a73;
 }
 
+/* Flow settings stack one per row until the panel is wide enough for three columns
+   (see the 560px rule below). Model names are the longest values, so full-width rows
+   are what keep them from being cut off with an ellipsis. */
 .field-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   min-width: 0;
 }
@@ -316,8 +322,8 @@ textarea:focus {
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 12.5px;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
   cursor: pointer;
   white-space: nowrap;
   text-align: center;
@@ -338,7 +344,7 @@ textarea:focus {
   background: var(--white);
   border-color: var(--white);
   color: #0b0b0c;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -368,7 +374,7 @@ textarea:focus {
 .btn-sm {
   min-height: 26px;
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .btn-block {
@@ -395,7 +401,7 @@ textarea:focus {
 
 .toggle-hint {
   color: var(--faint);
-  font-size: 11.5px;
+  font-size: var(--text-xs);
 }
 
 .toggle input {
@@ -462,13 +468,13 @@ textarea:focus {
 }
 
 .notice-title {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   overflow-wrap: anywhere;
 }
 
 .notice-hint {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
 
@@ -488,7 +494,7 @@ textarea:focus {
   flex: 0 0 auto;
   width: 16px;
   text-align: center;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .tone-error > .notice-icon,
@@ -516,7 +522,7 @@ textarea:focus {
   display: flex;
   gap: 8px;
   align-items: flex-start;
-  font-size: 12px;
+  font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
 
@@ -532,7 +538,7 @@ textarea:focus {
 
 .ok-line {
   color: var(--ok);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 /* ---------- Connection ---------- */
@@ -541,14 +547,14 @@ textarea:focus {
 
 .settings-note {
   color: var(--faint);
-  font-size: 11.5px;
+  font-size: var(--text-xs);
 }
 
 .kv {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 10px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--muted);
 }
 
@@ -584,7 +590,7 @@ textarea:focus {
 .ref-size {
   flex: 0 0 auto;
   color: var(--faint);
-  font-size: 11.5px;
+  font-size: var(--text-xs);
 }
 
 /* ---------- Queue ---------- */
@@ -644,7 +650,7 @@ textarea:focus {
   flex: 0 0 auto;
   width: 14px;
   text-align: center;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .s-completed .scene-icon {
@@ -663,13 +669,15 @@ textarea:focus {
 .scene-title {
   flex: 1 1 auto;
   min-width: 0;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
   overflow-wrap: anywhere;
 }
 
 .scene-status {
   flex: 0 0 auto;
-  font-size: 11.5px;
+  font-size: var(--text-xs);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -682,13 +690,13 @@ textarea:focus {
 .scene-prompt {
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
 
 .scene-detail {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text);
   overflow-wrap: anywhere;
 }
@@ -712,8 +720,8 @@ textarea:focus {
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 2px 7px;
-  font-size: 11.5px;
-  color: var(--muted);
+  font-size: var(--text-sm);
+  color: var(--text);
   overflow-wrap: anywhere;
 }
 
@@ -770,7 +778,7 @@ textarea:focus {
   border-radius: var(--radius-input);
   padding: 8px 9px;
   background: #17150d;
-  font-size: 12px;
+  font-size: var(--text-xs);
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -785,7 +793,7 @@ textarea:focus {
 
 .status-line {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
 
@@ -815,7 +823,7 @@ textarea:focus {
 }
 
 .decision-title {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   color: var(--warn);
   overflow-wrap: anywhere;
 }
@@ -842,7 +850,7 @@ textarea:focus {
 }
 
 .blocked-hint {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--muted);
   overflow-wrap: anywhere;
 }
@@ -856,7 +864,7 @@ textarea:focus {
 .card-log summary {
   cursor: pointer;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-xs);
   list-style-position: outside;
 }
 
@@ -874,14 +882,14 @@ textarea:focus {
   display: grid;
   grid-template-columns: 62px 1fr;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   min-width: 0;
 }
 
 .log-time {
   color: var(--faint);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
   padding-top: 1px;
 }
 
@@ -914,7 +922,7 @@ textarea:focus {
 .check {
   display: flex;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--text-xs);
   align-items: flex-start;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -924,7 +932,7 @@ textarea:focus {
   flex: 0 0 auto;
   width: 14px;
   text-align: center;
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
 }
 
 .check.is-ok .check-icon {
@@ -940,7 +948,7 @@ textarea:focus {
 }
 
 .check-label {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   white-space: nowrap;
 }
 
@@ -978,9 +986,6 @@ textarea:focus {
   .card {
     padding: 10px;
   }
-  .field-grid {
-    grid-template-columns: 1fr;
-  }
   .controls .btn {
     flex-basis: 100%;
   }
@@ -988,7 +993,7 @@ textarea:focus {
 
 @media (min-width: 560px) {
   .field-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr);
   }
 }
 
