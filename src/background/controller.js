@@ -364,7 +364,9 @@ export class Controller {
     return this.withFlowCommand(() =>
       this.withFlowTab(async () => {
         const result = await this.bridge.applySettings({ [key]: String(value) });
-        const stored = await this.storeFlowSettings(result);
+        // When the chip already showed the requested value, the change interaction was
+        // skipped; read once more so the panel keeps the full option lists.
+        const stored = result?.skipped ? await this.storeFlowSettings(await this.bridge.readSettings()) : await this.storeFlowSettings(result);
         await this.log('success', `Flow ${labelOf(key)} set to ${value}.`);
         return stored;
       }),

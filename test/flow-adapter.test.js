@@ -281,3 +281,24 @@ test('ping answers with the adapter version so the worker can confirm the connec
   assert.equal(reply.ok, true);
   assert.equal(reply.data.ready, true);
 });
+
+test('submit reports whether a generation actually began, not just that a click happened', async () => {
+  await current.adapter.insertPrompt('A prompt to send.');
+  const result = await current.adapter.submit();
+  assert.equal(result.clicked, true);
+  assert.equal(result.verified, true, 'the fixture shows a progress bar right after Generate, so the start is observable');
+});
+
+test('submit reports an unverified start when Flow shows no evidence after the click', async () => {
+  // A page whose Generate opens nothing: the result must not claim success.
+  const page = createPage();
+  const original = page.window.document.getElementById('generate');
+  const button = original.cloneNode(true); // drop the fixture's handler
+  button.disabled = false;
+  original.replaceWith(button);
+  await page.adapter.insertPrompt('A prompt to send.');
+  button.disabled = false; // the prompt is in place: Generate is enabled
+  const result = await page.adapter.submit();
+  assert.equal(result.clicked, true);
+  assert.equal(result.verified, false, 'no progress, no new output, no cleared prompt: not verified');
+});

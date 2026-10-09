@@ -90,6 +90,49 @@ export function formatDiagnosticsReport(d) {
     }
   }
 
+  // The settings trigger: the expected button (the community reference's shape, as a
+  // candidate), the actual control, and what covers it. Read-only evidence.
+  const trigger = d.settingsTrigger;
+  if (trigger) {
+    lines.push('', 'Settings trigger (read-only inspection):');
+    if (!trigger.found) {
+      lines.push(' - not found');
+    } else {
+      lines.push(` - found (${trigger.strategy}${trigger.ambiguous ? ', ambiguous' : ''}): label "${trigger.label ?? ''}"`);
+      if (trigger.control) {
+        const c = trigger.control;
+        lines.push(
+          ` - control: <${c.tag}${c.classes ? ` class="${c.classes}"` : ''}> "${c.name ?? ''}"${c.rect ? ` ${c.rect.width}x${c.rect.height} at (${c.rect.x}, ${c.rect.y})` : ''}` +
+            ` — visible: ${c.visible}, enabled: ${c.enabled}, connected: ${c.connected}, in composer: ${c.inComposer}, resolved via ${c.via}`,
+        );
+      }
+      if (trigger.foundElement && !trigger.foundElement.interactive) {
+        lines.push(` - the found element <${trigger.foundElement.tag}> is a LABEL, not a control (resolved to the control above)`);
+      }
+      lines.push(` - expected button (candidate): ${trigger.expectedButton?.exists ? `<${trigger.expectedButton.tag} class="${trigger.expectedButton.classes}"> "${trigger.expectedButton.name}" visible: ${trigger.expectedButton.visible}` : 'not present'}`);
+      lines.push(` - associated with the model chip: ${trigger.associatedWithChip === null ? 'unknown' : trigger.associatedWithChip}`);
+      lines.push(` - covered by another element: ${trigger.coveredBy ? `<${trigger.coveredBy.tag} class="${trigger.coveredBy.classes}"> "${trigger.coveredBy.name}"` : 'no'}`);
+      if (trigger.customAncestors?.length) lines.push(` - custom-element ancestors: ${trigger.customAncestors.join(' < ')}`);
+    }
+  }
+
+  // What the settings-read attempt's click changed in the DOM (added/removed
+  // menu-like elements): the evidence when a menu does not open.
+  const click = d.settingsRead?.click;
+  if (click) {
+    lines.push('', 'Settings-menu click evidence:');
+    lines.push(` - clicked: ${click.control} "${click.label}"${click.retried ? ' (retried once with a fresh element)' : ''}`);
+    lines.push(` - DOM added after the click: ${click.domAdded.length ? click.domAdded.join('; ') : 'nothing'}`);
+    lines.push(` - DOM removed after the click: ${click.domRemoved.length ? click.domRemoved.join('; ') : 'nothing'}`);
+  }
+  // The step-by-step trace of the settings read/apply (trigger found, menu opened,
+  // each selection verified against the chip).
+  const trace = d.settingsRead?.trace;
+  if (Array.isArray(trace) && trace.length) {
+    lines.push('', 'Settings read trace:');
+    for (const line of trace) lines.push(` - ${line.step}: ${line.detail}`);
+  }
+
   // The composer area: the model chip, its ancestor chain, every text field in its
   // region, the controls there, generate-button candidates and shadow-DOM hosts.
   // This is what identifies the prompt editor when the composer is NOT detected.
@@ -112,6 +155,8 @@ export function formatDiagnosticsReport(d) {
       lines.push(` - text fields in the chip's region (${area.regionFields.length}):`);
       for (const field of area.regionFields) {
         const bits = [field.kind];
+        if (field.classes) bits.push(`.${field.classes.split(/\s+/).slice(0, 3).join('.')}`);
+        if (field.customAncestors?.length) bits.push(`in ${field.customAncestors.join(' < ')}`);
         if (field.role) bits.push(`role=${field.role}`);
         if (field.name) bits.push(`"${field.name}"`);
         bits.push(field.visible ? 'visible' : 'hidden');
@@ -131,7 +176,13 @@ export function formatDiagnosticsReport(d) {
     }
     if (area.generateCandidates?.length) {
       const labelled = area.generateCandidates.filter((candidate) => candidate.labelled);
-      lines.push(` - generate-button candidates: ${labelled.length ? labelled.map((candidate) => `"${candidate.name}"`).join(', ') : 'none labelled'}`);
+      lines.push(
+        ` - generate-button candidates: ${
+          labelled.length
+            ? labelled.map((candidate) => `"${candidate.name}" <${candidate.tag}${candidate.classes ? ` class="${candidate.classes}"` : ''}>`).join(', ')
+            : 'none labelled'
+        }`,
+      );
     }
     if (area.shadowHosts?.length) {
       lines.push(` - custom elements with shadow roots: ${area.shadowHosts.map((host) => host.tag).join(', ')}`);

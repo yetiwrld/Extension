@@ -601,8 +601,10 @@ export class AutomationRunner {
 
     const target = this.automation().settingsTarget ?? {};
     if (Object.keys(target).length) {
-      const result = await this.flow.applySettings(target);
-      for (const key of Object.keys(target)) {
+      const result = await this.applySceneSettings(target, scene);
+      // A null result means the menu would not open but the chip already verified the
+      // settings (logged as a warning): there is nothing further to verify.
+      for (const key of result ? Object.keys(target) : []) {
         // Verify against what Flow reports after the change, never against what was requested.
         const actual = result?.current?.[key];
         if (actual !== target[key]) {
@@ -644,11 +646,46 @@ export class AutomationRunner {
     await this.log('info', `Scene ${scene.numberLabel}: uploaded ${payloads.map((item) => item.name).join(', ')}.`, scene.id);
   }
 
+  /**
+   * Apply the scene's settings. A menu that will not open is NOT a scene failure when
+   * the composer's own chip already shows the required settings: the chip is Flow's
+   * ground truth for model, ratio and output count, and the mode was verified when the
+   * session read the settings. Everything else fails the scene as before.
+   */
+  async applySceneSettings(target, scene) {
+    let result;
+    try {
+      result = await this.flow.applySettings(target);
+    } catch (error) {
+      const payload = toErrorPayload(error);
+      const menuWouldNotOpen = payload.code === ERROR_CODES.FLOW_UI_CHANGED && /did not open/.test(payload.message);
+      if (!menuWouldNotOpen) throw error;
+      const probe = await this.flow.probe().catch(() => null);
+      const chip = probe?.detectedSettings ?? {};
+      const chipKeys = ['model', 'aspectRatio', 'outputs'];
+      const chipOk = chipKeys.every((key) => !target[key] || (chip[key] && String(chip[key]).toLowerCase() === String(target[key]).toLowerCase()));
+      const stored = this.store.read(STORAGE_KEYS.flowSettings)?.current ?? {};
+      const modeOk = !target.mode || String(stored.mode ?? target.mode).toLowerCase() === String(target.mode).toLowerCase();
+      if (!chipOk || !modeOk) throw error;
+      await this.log(
+        'warn',
+        `Scene ${scene.numberLabel}: the settings menu would not open, but the composer chip already shows ${chipKeys.filter((key) => target[key]).map((key) => `${key} ${chip[key]}`).join(', ')}. Continuing with the verified settings.`,
+        scene.id,
+      );
+      return null;
+    }
+    for (const line of result?.trace ?? []) {
+      await this.log('info', `Scene ${scene.numberLabel}: settings — ${line.step}: ${line.detail}`, scene.id);
+    }
+    return result;
+  }
+
   async stepInsert(scene) {
     const result = await this.flow.insertPrompt(scene.prompt);
     if (!result?.verified) {
       throw new AutomationError(ERROR_CODES.PROMPT_INSERT_FAILED, 'Flow did not keep the prompt text that was inserted. Check the prompt box.');
     }
+    await this.log('info', `Scene ${scene.numberLabel}: prompt entered and verified (${result.length} characters).`, scene.id);
   }
 
   /**

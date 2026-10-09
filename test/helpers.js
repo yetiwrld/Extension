@@ -155,6 +155,7 @@ export function scriptedFlow(script = {}) {
     },
     async applySettings(target) {
       state.calls.push(['applySettings', target]);
+      if (script.applySettingsError) throw script.applySettingsError;
       // A locked setting models Flow refusing the change: the value Flow reports stays put.
       if (!script.lockedSettings) Object.assign(state.settings, target);
       Object.assign(state.settings, script.lockedSettings ?? {});

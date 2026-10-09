@@ -42,8 +42,6 @@ const MODEL_NAME = /\b(banana|veo|gemini|omni|imagen)\b/i;
 /** Weak signals: a settings-like name, a chevron icon, a bare mode word or an aspect-ratio chip. */
 const SETTINGS_NAME = /\b(settings?|preferences?|options?|tune|sliders?)\b|\u2699|arrow_drop_down|expand_more|unfold_more|keyboard_arrow_down|chevron_down/i;
 const MODE_NAME = /^(image|video)$/i;
-/** Menu triggers: real buttons, comboboxes, or any element that declares a popup. */
-const TRIGGER_SELECTOR = 'button, [role="button"], [role="combobox"], [aria-haspopup], [aria-expanded]';
 /** Every interactive control, including switches, for the "controls near the prompt" diagnostics. */
 const CONTROL_SELECTOR = 'button, [role="button"], [role="combobox"], [role="switch"], [role="checkbox"], [aria-haspopup], [aria-expanded]';
 /**
@@ -216,11 +214,9 @@ function collectShadowFields(scopeDoc, push, state) {
     // A Document has no ownerDocument; an element's does. Support both as the walk root.
     const owner = root.ownerDocument ?? root;
     const walker = owner.createTreeWalker(root, 1);
-    let scanned = 0;
     let current = walker.nextNode();
     while (current && state.scanned < 2000 && !state.done) {
       state.scanned += 1;
-      scanned += 1;
       if (current.tagName.includes('-') && current.shadowRoot) {
         state.hosts += 1;
         for (const field of current.shadowRoot.querySelectorAll(TEXT_FIELD_SELECTOR)) {
@@ -336,7 +332,10 @@ export function collectPromptCandidates(doc, { limit = 24 } = {}) {
 
 /** Candidates without their elements: safe to send to the service worker and the panel. */
 export function candidateSummaries(candidates) {
-  return (candidates ?? []).map(({ el, ...rest }) => rest);
+  return (candidates ?? []).map((candidate) => {
+    const { el: _el, ...rest } = candidate;
+    return rest;
+  });
 }
 
 /**
@@ -530,7 +529,10 @@ const GO_ICON_NAME = /(arrow_forward|arrow_upward|arrow_outward|play_arrow|send|
 export function findGenerateButton(doc, promptEl) {
   const region = findPromptRegion(promptEl);
   if (region) {
-    const nearby = visibleControlsWithin(region).filter((button) => {
+    // Deep and shadow-aware: Flow's composer is built from custom elements, so the
+    // Generate control can sit inside a custom element's shadow root.
+    const regionControls = deepControlsWithin(region, { cap: 60 });
+    const nearby = regionControls.filter((button) => {
       const name = accessibleName(button);
       return GENERATE_NAME.test(name) || SEND_NAME.test(name);
     });
@@ -539,8 +541,12 @@ export function findGenerateButton(doc, promptEl) {
       const el = generate ?? nearby[nearby.length - 1];
       return { el, strategy: generate ? 'generate-in-prompt-region' : 'send-in-prompt-region' };
     }
+    // A Generate control named by its class (Flow's icon button: button.generate-icon-button
+    // inside flow-generate-icon-button), in-region only.
+    const classed = regionControls.filter((button) => /generate/i.test(button.getAttribute('class') ?? ''));
+    if (classed.length) return { el: classed[classed.length - 1], strategy: 'generate-class-in-prompt-region' };
     // An icon-only Generate control (a material ligature, no text) still counts, in-region only.
-    const icons = visibleControlsWithin(region).filter((button) => GO_ICON_NAME.test(accessibleName(button) || ''));
+    const icons = regionControls.filter((button) => GO_ICON_NAME.test(accessibleName(button) || ''));
     if (icons.length) return { el: icons[icons.length - 1], strategy: 'generate-icon-in-prompt-region' };
   }
   // Document-wide fallback only accepts an explicit "Generate" label, never "Create project" style controls.
@@ -593,6 +599,68 @@ function collectHosts(scope, minRank) {
 }
 
 const INTERACTIVE_SELECTOR = 'button, a, [role="button"], [role="combobox"], [role="menuitem"], [aria-haspopup], [aria-expanded], [tabindex]';
+
+/** Elements that are a control in their own right: clicking them is meaningful. */
+const REAL_CONTROL_SELECTOR = 'button, [role="button"], [role="combobox"], [aria-haspopup], [aria-expanded], a[href]';
+
+/**
+ * Resolve a found trigger element to the control that actually opens the menu.
+ * Flow's visible model label is often a CHILD of the clickable button (a community
+ * DOM reference shows `flow-base-prompt-box div.submit-controls button.settings-trigger-button`
+ * with the label inside): clicking the label only works when it sits inside the
+ * button, and clicking a bare non-interactive element does nothing. The walk goes
+ * up through the light DOM and across shadow hosts, so a label inside a custom
+ * element's shadow resolves to the button within that same shadow tree.
+ *
+ * @returns {{el: Element, via: string}|null} the control, or null when no ancestor is one.
+ */
+export function resolveInteractiveControl(el, maxLevels = 8) {
+  let node = el;
+  for (let level = 0; node && level <= maxLevels; level += 1) {
+    if (node.matches?.(REAL_CONTROL_SELECTOR)) return { el: node, via: level === 0 ? 'self' : `ancestor-${level}` };
+    let parent = node.parentElement;
+    if (!parent) {
+      const root = node.getRootNode?.();
+      parent = root && root.host ? root.host : null;
+    }
+    if (!parent) break;
+    node = parent;
+  }
+  return null;
+}
+
+/** Whether an element is a control in its own right (not a label inside one). */
+export function isRealControl(el) {
+  return Boolean(el?.matches?.(REAL_CONTROL_SELECTOR));
+}
+
+/** Buttons and controls inside `node`, descending into shadow roots up to `levels` deep. Bounded. */
+function deepControlsWithin(node, { levels = 3, cap = 40, scanCap = 4000 } = {}) {
+  const out = [];
+  const seen = new Set();
+  const consider = (el) => {
+    if (out.length >= cap || seen.has(el)) return;
+    seen.add(el);
+    if (isVisible(el) && el.matches(CONTROL_SELECTOR)) out.push(el);
+  };
+  const walk = (root, depth) => {
+    if (out.length >= cap || depth > levels) return;
+    for (const el of root.querySelectorAll(CONTROL_SELECTOR)) consider(el);
+    if (out.length >= cap) return;
+    // Descend into custom-element hosts, bounded.
+    const owner = root.ownerDocument ?? root;
+    const walker = owner.createTreeWalker(root, 1);
+    let scanned = 0;
+    let current = walker.nextNode();
+    while (current && scanned < scanCap && out.length < cap) {
+      scanned += 1;
+      if (current.tagName.includes('-') && current.shadowRoot) walk(current.shadowRoot, depth + 1);
+      current = walker.nextNode();
+    }
+  };
+  walk(node, 0);
+  return out;
+}
 
 /** An element's own text: its direct text nodes only, never its descendants'. */
 function ownText(el) {
@@ -667,25 +735,38 @@ export function collectModelNamedControls(scope, { interactiveOnly = false, limi
 }
 
 /**
- * The control that opens the generation settings menu (Mode / Model / Aspect ratio).
+ * The control that opens the generation settings menu (Mode / Model / Aspect ratio /
+ * output count).
  *
  * The verified control is the model chip in the prompt composer: Google's own help
- * says to "click the model name" in the prompt box, and that menu holds all three
- * settings. The chip is often a plain element with no button semantics, so besides
- * the semantic controls it is found BY ITS MODEL NAME (collectModelNamedControls).
+ * says to "click the model name" in the prompt box, and that menu holds the settings.
+ * The chip is often a plain element with no button semantics, so besides the
+ * semantic controls it is found BY ITS MODEL NAME (collectModelNamedControls). A
+ * community DOM reference also names the control directly
+ * (`flow-base-prompt-box div.submit-controls button.settings-trigger-button`): a
+ * button whose class says "settings trigger" is accepted IN REGION as a candidate,
+ * never trusted blindly — the menu validation still rejects a wrong menu.
+ *
+ * When the found element is only the visible LABEL (a child of the real button), it
+ * is resolved to the control (resolveInteractiveControl) so the click lands on the
+ * element that opens the menu, and the label is kept for messages.
  *
  * Outside the prompt region the search accepts ONLY model-named controls: a generic
  * popup elsewhere on the page (a toolbar gear, a view switcher) is not verified to
  * open the generation settings, and clicking one reads a different menu — which is
- * how an unrelated option can be mistaken for the model. Weak in-region signals
- * (an aspect-ratio chip) are still accepted when nothing better exists; the menu
- * validation in settings.js rejects a menu that is not the generation settings.
+ * how an unrelated option can be mistaken for the model.
  */
 export function findSettingsTrigger(doc, promptEl) {
   const region = findPromptRegion(promptEl) ?? doc;
+  // Shadow-aware and deep: Flow's composer is built from custom elements
+  // (flow-base-prompt-box …), so the trigger can sit two shadow levels down.
+  const regionControls = deepControlsWithin(region);
   const inRegionList = [
-    // Shadow-aware: a custom-element toolbar's trigger is invisible to a plain querySelectorAll.
-    ...visibleControlsWithin(region).map((el) => ({ el, rank: settingsTriggerRank(el) })),
+    ...regionControls.map((el) => ({ el, rank: settingsTriggerRank(el) })),
+    // The community reference's shape: a button whose class names it as the settings trigger.
+    ...regionControls
+      .filter((el) => el.tagName === 'BUTTON' && /settings(-trigger|-button)?/i.test(el.getAttribute('class') ?? ''))
+      .map((el) => ({ el, rank: 3, named: 'settings-class' })),
     ...collectHosts(region, 1),
     ...collectModelNamedControls(region),
   ].filter((item) => item.rank >= 1);
@@ -705,7 +786,23 @@ export function findSettingsTrigger(doc, promptEl) {
   const opensPopup = found.el.hasAttribute('aria-haspopup') || found.el.hasAttribute('aria-expanded');
   const base = opensPopup ? 'settings-trigger-aria-haspopup' : 'settings-trigger-by-name';
   const named = found.name && !opensPopup ? 'settings-trigger-model-name' : base;
-  return { el: found.el, strategy: inRegion ? named : `${named}-in-document`, ambiguous: isAmbiguous(all) };
+  const strategy = inRegion ? named : `${named}-in-document`;
+  // The visible label is often a child of the real button: click the control, keep the label.
+  const resolved = resolveInteractiveControl(found.el);
+  const control = resolved?.el ?? found.el;
+  return {
+    el: control,
+    label: found.name ?? accessibleName(found.el) ?? controlLabel(found.el),
+    control: {
+      el: control,
+      tag: control.tagName.toLowerCase(),
+      classes: (control.getAttribute('class') ?? '').slice(0, 80),
+      via: resolved?.via ?? 'self',
+    },
+    foundElement: { tag: found.el.tagName.toLowerCase(), classes: (found.el.getAttribute('class') ?? '').slice(0, 80), interactive: isRealControl(found.el) },
+    strategy,
+    ambiguous: isAmbiguous(all),
+  };
 }
 
 /** Find the settings trigger, waiting a bounded time for Flow's asynchronous UI to render it. */
@@ -762,6 +859,144 @@ export function classifyControl(el) {
   if (MODE_NAME.test(name)) return 'mode';
   if (SETTINGS_NAME.test(name)) return 'settings';
   return 'other';
+}
+
+/** A short, clone-safe description of an element for diagnostics: tag, classes, role, name. */
+function describeElement(el) {
+  if (!el) return null;
+  const rect = el.getBoundingClientRect?.();
+  return {
+    tag: el.tagName.toLowerCase(),
+    classes: (el.getAttribute('class') ?? '').slice(0, 80),
+    role: el.getAttribute('role') ?? '',
+    name: (accessibleName(el) || controlLabel(el) || '').slice(0, 60),
+    rect: rect && (rect.width || rect.height) ? { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) } : null,
+  };
+}
+
+/** Custom-element (flow-*) ancestors of an element, crossing shadow hosts, bounded. */
+function customAncestorsOf(el, limit = 6) {
+  const out = [];
+  let node = el;
+  for (let level = 0; node && out.length < limit; level += 1) {
+    let parent = node.parentElement;
+    if (!parent) {
+      const root = node.getRootNode?.();
+      parent = root && root.host ? root.host : null;
+    }
+    if (!parent) break;
+    if (parent.tagName.includes('-')) out.push(parent.tagName.toLowerCase());
+    node = parent;
+  }
+  return out;
+}
+
+/**
+ * Inspect the settings trigger for the "Check Flow page" report: whether the expected
+ * settings button exists (the community reference's shape, as a CANDIDATE), the actual
+ * control's tag/classes/name/rect, whether it is visible, enabled, connected, inside the
+ * composer, associated with the visible model chip, and what covers it at its centre.
+ */
+export function inspectSettingsTrigger(doc, promptEl) {
+  const region = findPromptRegion(promptEl) ?? doc;
+  const trigger = findSettingsTrigger(doc, promptEl);
+  const chip = promptEl ? findDetectedSettings(doc, promptEl) : { model: null };
+  const control = trigger?.el ?? null;
+  const report = {
+    found: Boolean(trigger),
+    strategy: trigger?.strategy ?? null,
+    ambiguous: trigger?.ambiguous ?? null,
+    label: trigger?.label ?? null,
+    control: null,
+    expectedButton: null,
+    associatedWithChip: null,
+    coveredBy: null,
+    customAncestors: control ? customAncestorsOf(control) : [],
+  };
+  if (control) {
+    const rect = control.getBoundingClientRect?.();
+    const cx = rect ? Math.round(rect.x + rect.width / 2) : 0;
+    const cy = rect ? Math.round(rect.y + rect.height / 2) : 0;
+    let coveredBy = null;
+    if (rect && rect.width && rect.height && doc.elementFromPoint) {
+      const top = doc.elementFromPoint(cx, cy);
+      if (top && top !== control && !control.contains(top) && !(top.shadowRoot && control.getRootNode() === top.shadowRoot)) {
+        coveredBy = describeElement(top);
+      }
+    }
+    report.control = {
+      ...describeElement(control),
+      visible: isVisible(control),
+      enabled: !isDisabled(control),
+      connected: control.isConnected,
+      inComposer: Boolean(region && region !== doc && region.contains(control)),
+      via: trigger.control?.via ?? 'self',
+    };
+    report.coveredBy = coveredBy;
+    // Associated with the chip: the control's composed subtree shows the chip's model.
+    const subtreeText = normalizeText(control.textContent ?? '');
+    report.associatedWithChip = chip.model ? subtreeText.toLowerCase().includes(chip.model.toLowerCase()) : null;
+  }
+  // The community reference's candidate: a button whose class names it as the settings
+  // trigger, inside the composer. Reported as a candidate, never trusted blindly.
+  const candidate = deepControlsWithin(region).find(
+    (el) => el.tagName === 'BUTTON' && /settings(-trigger|-button)?/i.test(el.getAttribute('class') ?? ''),
+  );
+  report.expectedButton = candidate ? { ...describeElement(candidate), exists: true, visible: isVisible(candidate), enabled: !isDisabled(candidate) } : { exists: false };
+  return report;
+}
+
+/**
+ * A bounded, clone-safe signature of everything menu-like in the document (and its
+ * shadow roots): role-based surfaces, Flow-named custom elements, and visible rows
+ * that classify as generation settings. Used to diff the DOM before and after a click,
+ * so a menu that opened without any recognised role still shows up as a change.
+ */
+export function snapshotMenuish(doc, { chipModel = null, cap = 60 } = {}) {
+  const entries = new Set();
+  const add = (text) => {
+    if (entries.size < cap) entries.add(text);
+  };
+  for (const scope of collectMenuScopes(doc)) {
+    for (const el of scope.querySelectorAll(MENU_SELECTOR)) {
+      if (isVisible(el)) add(`surface:${describeElement(el)?.tag}.${(el.getAttribute('class') ?? '').slice(0, 40)}`);
+    }
+    for (const el of scope.querySelectorAll('*')) {
+      if (entries.size >= cap) break;
+      const tag = el.tagName.toLowerCase();
+      const cls = el.getAttribute('class') ?? '';
+      if ((tag.includes('menu') || tag.includes('popover') || /menu|popover|settings/i.test(cls)) && isVisible(el)) {
+        add(`flow:${tag}.${cls.slice(0, 40)}`);
+      }
+    }
+  }
+  // Visible setting rows anywhere (the menu's content, wherever it lives).
+  for (const scope of collectMenuScopes(doc)) {
+    const walker = (scope.ownerDocument ?? scope).createTreeWalker(scope, 1);
+    let scanned = 0;
+    let node = walker.nextNode();
+    while (node && scanned < 2500 && entries.size < cap) {
+      scanned += 1;
+      if (isVisible(node)) {
+        const own = normalizeText(ownText(node));
+        if (own.length >= 2 && own.length <= 40 && /[A-Za-z0-9]/.test(own) && !node.querySelector('*')) {
+          if (classifySettingOption({ name: own, group: null }, { chipModel })) add(`row:${own}`);
+        }
+      }
+      node = walker.nextNode();
+    }
+  }
+  return Array.from(entries).sort();
+}
+
+/** The entries added/removed between two snapshots (the DOM change a click caused). */
+export function diffSignatures(before, after) {
+  const beforeSet = new Set(before ?? []);
+  const afterSet = new Set(after ?? []);
+  return {
+    added: Array.from(afterSet).filter((entry) => !beforeSet.has(entry)),
+    removed: Array.from(beforeSet).filter((entry) => !afterSet.has(entry)),
+  };
 }
 
 /** The model chip's raw text ("🍌 Nano Banana 2.1 crop_16_9 x1"), or null when no chip is identifiable. */
@@ -892,13 +1127,35 @@ export function inspectComposerArea(doc) {
       label: normalizeText(el.getAttribute('aria-label') ?? '').slice(0, 40),
       childTags: Array.from(new Set(Array.from(el.children).map((child) => child.tagName.toLowerCase()))).slice(0, 12).join(','),
     }));
-    const region = findPromptRegion(chip.el);
-    const scope = region ?? doc;
-    const fields = scope.querySelectorAll(TEXT_FIELD_SELECTOR);
-    for (const el of Array.from(fields).slice(0, 12)) {
+    // Text fields can live inside a custom element's shadow root (Flow's composer is
+    // built from flow-* elements), and the chip's own region may be a sibling strip
+    // (submit-controls) rather than the whole composer: scan the chip's ancestor
+    // chain and one shadow level of each custom host, deduped and bounded.
+    const fields = [];
+    const seenFields = new Set();
+    const addFields = (root) => {
+      for (const field of root.querySelectorAll(TEXT_FIELD_SELECTOR)) {
+        if (!seenFields.has(field) && fields.length < 12) {
+          seenFields.add(field);
+          fields.push(field);
+        }
+      }
+    };
+    for (const ancestor of composerAncestors(chip.el, 6)) {
+      if (fields.length >= 12) break;
+      addFields(ancestor);
+      for (const el of ancestor.querySelectorAll('*')) {
+        if (fields.length >= 12) break;
+        if (el.tagName.includes('-') && el.shadowRoot) addFields(el.shadowRoot);
+      }
+    }
+    if (fields.length < 12) addFields(doc);
+    for (const el of fields) {
       const r = el.getBoundingClientRect?.();
       area.regionFields.push({
         tag: el.tagName.toLowerCase(),
+        classes: (el.getAttribute('class') ?? '').slice(0, 60),
+        customAncestors: customAncestorsOf(el, 4),
         role: el.getAttribute('role') ?? '',
         kind: candidateKind(el),
         name: fieldLabel(el).slice(0, 40),
@@ -912,12 +1169,26 @@ export function inspectComposerArea(doc) {
       area.regionControls.push(control);
     }
   }
-  for (const button of queryAllVisible(doc, 'button, [role="button"]').slice(0, 12)) {
+  // Generate candidates anywhere in the document AND its shadow roots (Flow's icon
+  // button lives inside flow-generate-icon-button's shadow root).
+  const buttons = [];
+  const seenButtons = new Set();
+  for (const scope of collectMenuScopes(doc)) {
+    for (const button of scope.querySelectorAll('button, [role="button"]')) {
+      if (!seenButtons.has(button) && buttons.length < 12) {
+        seenButtons.add(button);
+        buttons.push(button);
+      }
+    }
+  }
+  for (const button of buttons) {
     area.generateCandidates.push({
       tag: button.tagName.toLowerCase(),
+      classes: (button.getAttribute('class') ?? '').slice(0, 60),
+      customAncestors: customAncestorsOf(button, 4),
       name: accessibleName(button).slice(0, 40),
       title: (button.getAttribute('title') ?? '').slice(0, 40),
-      labelled: Boolean(GENERATE_NAME.test(accessibleName(button)) || SEND_NAME.test(accessibleName(button)) || GO_ICON_NAME.test(accessibleName(button))),
+      labelled: Boolean(GENERATE_NAME.test(accessibleName(button)) || SEND_NAME.test(accessibleName(button)) || GO_ICON_NAME.test(accessibleName(button)) || /generate/i.test(button.getAttribute('class') ?? '')),
     });
   }
   const hosts = [];
@@ -954,17 +1225,30 @@ function collectNamedControlsBy(scope, patterns, limit) {
   return out;
 }
 
-/** Shadow roots reachable from `doc`, one level deep, bounded (menus inside custom elements). */
-function collectMenuScopes(doc) {
+/**
+ * Shadow roots reachable from `doc`, up to three levels deep, bounded. Flow renders
+ * its composer AND its settings menu inside custom elements (flow-base-prompt-box,
+ * flow-rich-text-editor, …), and the menu can be two shadow levels down or in a
+ * portal at the document body — a one-level walk misses it and reports "did not open"
+ * for a menu that IS open.
+ */
+function collectMenuScopes(doc, { levels = 3, scopeCap = 12, scanCap = 4000 } = {}) {
   const scopes = [doc];
-  const walker = doc.createTreeWalker(doc, 1);
-  let scanned = 0;
-  let current = walker.nextNode();
-  while (current && scanned < 1500 && scopes.length < 8) {
-    scanned += 1;
-    if (current.tagName.includes('-') && current.shadowRoot) scopes.push(current.shadowRoot);
-    current = walker.nextNode();
-  }
+  const walk = (root, depth) => {
+    if (scopes.length >= scopeCap || depth >= levels) return;
+    const walker = (root.ownerDocument ?? root).createTreeWalker(root, 1);
+    let scanned = 0;
+    let current = walker.nextNode();
+    while (current && scanned < scanCap && scopes.length < scopeCap) {
+      scanned += 1;
+      if (current.tagName.includes('-') && current.shadowRoot) {
+        scopes.push(current.shadowRoot);
+        walk(current.shadowRoot, depth + 1);
+      }
+      current = walker.nextNode();
+    }
+  };
+  walk(doc, 0);
   return scopes;
 }
 
@@ -1006,9 +1290,11 @@ export function collectOpenMenus(doc, { exclude = null } = {}) {
  * The menu surface that a click just opened: every open surface except `previous`
  * itself, its ancestors, and the composer. Nested submenus (Flow's "Select model
  * family") appear either beside the parent menu or inside it; surfaces outside the
- * previous menu win, otherwise the last surface inside it.
+ * previous menu win, otherwise the last surface inside it. Content-based surfaces
+ * (a role-less menu) are included: a menu Flow renders without ARIA roles must not
+ * be invisible to the reader.
  */
-export function pickNewMenuSurface(doc, previous, promptEl = null) {
+export function pickNewMenuSurface(doc, previous, promptEl = null, { chipModel = null } = {}) {
   const candidates = collectOpenMenus(doc).filter(({ el }) => {
     if (previous && (el === previous || el.contains(previous))) return false;
     if (promptEl && (el === promptEl || el.contains(promptEl))) return false;
@@ -1017,7 +1303,99 @@ export function pickNewMenuSurface(doc, previous, promptEl = null) {
   const outside = candidates.filter(({ el }) => !previous || !previous.contains(el));
   const menus = (outside.length ? outside : candidates).filter((item) => item.isMenu);
   const pool = menus.length ? menus : outside.length ? outside : candidates;
-  return pool.length ? pool[pool.length - 1].el : null;
+  if (pool.length) return pool[pool.length - 1].el;
+  // Nothing role-based: fall back to a menu recognised by its CONTENT.
+  return findSettingsMenuByContent(doc, { exclude: previous ?? promptEl, chipModel });
+}
+
+/**
+ * Find Flow's generation-settings menu by WHAT IT SHOWS, not by its role. Flow's menu
+ * can be a role-less custom element in a portal; the rows inside it are short labels
+ * that classify as generation settings (Image/Video, aspect ratios, x-counts, the
+ * model-list trigger). A container with at least three such rows spanning at least two
+ * different settings is the menu; the smallest such container wins (the surface, not
+ * a huge wrapper). The composer's own controls never qualify: its rows do not
+ * classify as settings.
+ */
+export function findSettingsMenuByContent(doc, { exclude = null, chipModel = null } = {}) {
+  const rows = [];
+  for (const scope of collectMenuScopes(doc)) {
+    const walker = (scope.ownerDocument ?? scope).createTreeWalker(scope, 1);
+    let scanned = 0;
+    let node = walker.nextNode();
+    while (node && scanned < 3000 && rows.length < 200) {
+      scanned += 1;
+      if (!isVisible(node)) {
+        node = walker.nextNode();
+        continue;
+      }
+      const own = normalizeText(ownText(node));
+      if (own.length >= 2 && own.length <= 40 && /[A-Za-z0-9]/.test(own) && !node.querySelector('*')) {
+        const key = classifySettingOption({ name: own, group: null }, { chipModel });
+        rows.push({ el: node, key });
+      }
+      node = walker.nextNode();
+    }
+  }
+  // A container is the menu when it holds at least three short label rows and either
+  // two different settings among them, or (for a nested list like the model menu,
+  // whose rows only classify through the chip) at least one recognised row.
+  const tally = new Map();
+  for (const row of rows) {
+    let node = row.el.parentElement;
+    for (let level = 0; node && level < 8; level += 1) {
+      if (exclude && (node === exclude || node.contains(exclude))) break;
+      const entry = tally.get(node) ?? { keys: new Set(), rowish: 0, classified: 0 };
+      entry.rowish += 1;
+      if (row.key) {
+        entry.keys.add(row.key);
+        entry.classified += 1;
+      }
+      tally.set(node, entry);
+      let parent = node.parentElement;
+      if (!parent) {
+        const root = node.getRootNode?.();
+        parent = root && root.host ? root.host : null;
+      }
+      node = parent;
+    }
+  }
+  let best = null;
+  for (const [container, entry] of tally) {
+    const qualifies = entry.rowish >= 3 && (entry.keys.size >= 2 || (chipModel && entry.classified >= 1));
+    if (!qualifies) continue;
+    // The tightest qualifying wrapper is the menu surface, not a portal ancestor.
+    const size = countDescendants(container);
+    if (!best || size < best.size || (size === best.size && entry.rowish > best.entry.rowish)) {
+      best = { container, entry, size };
+    }
+  }
+  return best?.container ?? null;
+}
+
+/** Bounded descendant-element count (the tightness of a wrapper), capped. */
+function countDescendants(el, cap = 500) {
+  let count = 0;
+  const walker = (el.ownerDocument ?? el).createTreeWalker(el, 1);
+  let node = walker.nextNode();
+  while (node && count < cap) {
+    count += 1;
+    node = walker.nextNode();
+  }
+  return count;
+}
+
+/**
+ * The open generation-settings menu: role-based surfaces first (a real menu or
+ * listbox beats a bare wrapper), then a menu recognised by its content. Portals and
+ * overlay containers anywhere in the document (and inside shadow roots) are searched.
+ */
+export function findSettingsMenu(doc, { exclude = null, chipModel = null } = {}) {
+  const all = collectOpenMenus(doc, { exclude });
+  const menus = all.filter((item) => item.isMenu);
+  const pool = menus.length ? menus : all;
+  if (pool.length) return pool[pool.length - 1].el;
+  return findSettingsMenuByContent(doc, { exclude, chipModel });
 }
 
 /**

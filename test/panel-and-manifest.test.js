@@ -300,3 +300,36 @@ test('the page check renders a dead-connector report with its reason', () => {
   assert.match(html, /Could not connect to this Flow tab\./);
   assert.match(html, /data-action="copy-diagnostics"/, 'the report can still be copied');
 });
+
+test('the panel shows the settings trigger the extension clicks', () => {
+  const html = R.renderSettings(
+    {
+      prefs: { generationTimeoutMinutes: 10 },
+      automation: { phase: 'idle' },
+    },
+    {
+      busy: false,
+      diagnostics: {
+        checks: [],
+        detectedSettings: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9', outputs: 'x1' },
+        modelChip: 'Nano Banana 2.1',
+        settingsTrigger: {
+          found: true,
+          label: '🍌 Nano Banana 2.1 crop_16_9 x1',
+          control: { tag: 'button', classes: 'settings-trigger-button', name: '🍌 Nano Banana 2.1 crop_16_9 x1', visible: true, enabled: true },
+        },
+        settingsRead: {
+          attempted: true,
+          ok: true,
+          current: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9', outputs: 'x1' },
+          options: {},
+          chipModel: 'Nano Banana 2.1',
+        },
+      },
+    },
+  );
+  assert.ok(html, 'the settings section renders');
+  assert.match(html, /Settings trigger/);
+  assert.match(html, /settings-trigger-button/, 'the control is named');
+  assert.match(html, /visible: true, enabled: true/);
+});

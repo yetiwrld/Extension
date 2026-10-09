@@ -396,3 +396,49 @@ test('a Flow layout without output counts is left exactly as Flow shows it', asy
   assert.ok(applied.length > 0);
   assert.equal('outputs' in applied[0][1], false, 'no output count is invented for a layout that does not offer one');
 });
+
+test('a scene is NOT failed when the settings menu will not open but the chip already verifies the settings', async () => {
+  const { runner, logs, flow } = await createRunner({
+    flowScript: {
+      settings: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9', outputs: 'x1' },
+      options: { outputs: ['x1', 'x2', 'x3', 'x4'] },
+      applySettingsError: Object.assign(new Error('The Flow settings menu did not open after clicking "🍌 Nano Banana 2.1 crop_16_9 x1".'), { code: 'FLOW_UI_CHANGED' }),
+      probeQueue: [],
+    },
+  });
+  // The probe reports the chip already showing the required settings.
+  flow.state.probeQueue.push(null);
+  const originalProbe = flow.probe.bind(flow);
+  flow.probe = async () => ({
+    ...(await originalProbe()),
+    detectedSettings: { mode: null, model: 'Nano Banana 2.1', aspectRatio: '16:9', outputs: 'x1' },
+  });
+  await runner.start({ tabId: 1 });
+  await runner.whenIdle();
+  const messages = logs.map((entry) => entry.message);
+  assert.ok(messages.some((message) => /settings menu would not open, but the composer chip already shows/.test(message)), JSON.stringify(messages));
+  assert.ok(messages.some((message) => /generation submitted|Generating in Flow/.test(message)), 'the scene continued to generation');
+  const submitted = flow.state.calls.filter((call) => Array.isArray(call) && call[0] === 'submit');
+  assert.ok(submitted.length > 0, 'Generate was activated despite the menu failure');
+});
+
+test('a menu failure still fails the scene when the chip does NOT verify the settings', async () => {
+  const { runner, logs, flow } = await createRunner({
+    flowScript: {
+      settings: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9', outputs: 'x1' },
+      options: { outputs: ['x1', 'x2', 'x3', 'x4'] },
+      applySettingsError: Object.assign(new Error('The Flow settings menu did not open after clicking "🍌 Nano Banana 2.1 crop_16_9 x1".'), { code: 'FLOW_UI_CHANGED' }),
+    },
+  });
+  const originalProbe = flow.probe.bind(flow);
+  flow.probe = async () => ({
+    ...(await originalProbe()),
+    detectedSettings: { mode: null, model: 'Veo 3.1', aspectRatio: '9:16', outputs: 'x2' },
+  });
+  await runner.start({ tabId: 1 });
+  await runner.whenIdle();
+  const messages = logs.map((entry) => entry.message);
+  assert.ok(messages.some((message) => /settings menu did not open after clicking/.test(message)), JSON.stringify(messages));
+  const submitted = flow.state.calls.filter((call) => Array.isArray(call) && call[0] === 'submit');
+  assert.equal(submitted.length, 0, 'no scene was generated with unverified settings');
+});

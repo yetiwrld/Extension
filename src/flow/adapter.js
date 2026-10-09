@@ -12,7 +12,9 @@ import {
   countUnreachableFrames,
   findAgentToggle,
   findDetectedSettings,
+  findProgressIndicators,
   inspectComposerArea,
+  inspectSettingsTrigger,
   findGenerateButton,
   findPromptBoxWhenReady,
   findSettingsTrigger,
@@ -25,7 +27,7 @@ import {
   selectorResults,
   summarizePromptRejections,
 } from './selectors.js';
-import { accessibleName, clickElement, normalizeText } from './dom.js';
+import { accessibleName, clickElement, normalizeText, readEditableText, waitForValue } from './dom.js';
 
 /**
  * Flow adapter: the only place that turns automation intents into Flow DOM work.
@@ -156,6 +158,11 @@ export function createFlowAdapter(options = {}) {
         // controls, generate candidates, shadow hosts) — the evidence for finding the
         // prompt editor when the composer is NOT detected.
         composerArea: guarded('composer area', () => inspectComposerArea(doc), null),
+        // Read-only inspection of the settings trigger: the expected button (the
+        // community reference's shape, as a candidate), the actual control's
+        // tag/classes/name/rect, visibility, enabled state, what covers it, and
+        // whether it is the control associated with the visible model chip.
+        settingsTrigger: guarded('settings trigger', () => inspectSettingsTrigger(doc, prompt?.el ?? null), null),
         agentOn: Boolean(agent?.on),
         agentFound: Boolean(agent),
         composerLayout: prompt ? (agent?.on ? 'agent' : 'standard') : null,
@@ -191,6 +198,8 @@ export function createFlowAdapter(options = {}) {
             aspectMatchesChip: result.aspectMatchesChip,
             outputsMatchesChip: result.outputsMatchesChip,
             hasModelSubmenu: result.hasModelSubmenu,
+            trace: result.trace ?? [],
+            click: result.click ?? null,
           };
         } catch (error) {
           const payload = toErrorPayload(error);
@@ -283,9 +292,22 @@ export function createFlowAdapter(options = {}) {
           `Flow's ${accessibleName(generate.el) || 'Generate'} button is disabled. Check that the prompt is not empty and the settings are valid.`,
         );
       }
+      const before = {
+        outputs: takeOutputSnapshot(doc).outputKeys.length,
+        progress: findProgressIndicators(doc, prompt.el).length,
+        promptText: normalizeText(readEditableText(prompt.el)),
+      };
       clickElement(generate.el);
-      await sleep(timings.settleMs);
-      return { clicked: true, strategy: generate.strategy };
+      // A click is not a generation: look for observable start evidence (a progress
+      // indicator, a new output, or the prompt clearing). The result reports whether
+      // any was seen; the runner keeps the authoritative, longer acceptance wait.
+      const verified = await waitForValue(() => {
+        const outputs = takeOutputSnapshot(doc).outputKeys.length;
+        const progress = findProgressIndicators(doc, prompt.el).length;
+        const text = normalizeText(readEditableText(prompt.el));
+        return outputs > before.outputs || progress > before.progress || (before.promptText && !text) ? true : null;
+      }, { timeoutMs: 4000, intervalMs: 150, sleep });
+      return { clicked: true, verified: Boolean(verified), strategy: generate.strategy };
     },
 
     /** Output and progress state since `baseline`. */

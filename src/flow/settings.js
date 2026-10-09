@@ -2,10 +2,11 @@ import { AutomationError, ERROR_CODES } from '../utils/errors.js';
 import { accessibleName, clickElement, clickOutside, isVisible, normalizeText, pressEscape, waitForValue } from './dom.js';
 import {
   classifySettingOption,
-  collectOpenMenus,
+  diffSignatures,
   findDetectedSettings,
   findModelChipText,
   findOpenPopover,
+  findSettingsMenu,
   findSettingsTrigger,
   findSettingsTriggerWhenReady,
   isModelSubmenuTrigger,
@@ -14,6 +15,7 @@ import {
   pickNewMenuSurface,
   readPopoverOptions,
   requirePromptBox,
+  snapshotMenuish,
 } from './selectors.js';
 
 /**
@@ -41,7 +43,11 @@ export async function readFlowSettings(ctx) {
   const prompt = requirePromptBox(ctx.doc);
   const trigger = await requireSettingsTrigger(ctx, prompt);
   const chip = findDetectedSettings(ctx.doc, prompt.el);
-  const popover = await openSettingsPopover(ctx, trigger.el, prompt.el);
+  const trace = [
+    { step: 'trigger-found', detail: `${trigger.strategy}: "${String(trigger.label ?? '').slice(0, 40)}" (${trigger.control?.tag ?? trigger.el.tagName.toLowerCase()}.${trigger.control?.classes ?? ''})` },
+  ];
+  const { popover, click } = await openSettingsPopover(ctx, trigger, prompt.el, chip);
+  trace.push({ step: 'menu-opened', detail: `popover detected after clicking ${click.control}` });
   let nested = null;
   try {
     const options = readPopoverOptions(popover);
@@ -52,10 +58,15 @@ export async function readFlowSettings(ctx) {
     );
     let modelRead = { options: [], selected: null };
     if (modelTrigger) {
-      nested = await openNestedMenu(ctx, popover, modelTrigger.el, prompt.el);
-      if (nested) modelRead = await readModelMenu(ctx, nested, chip, prompt.el);
+      nested = await openNestedMenu(ctx, popover, modelTrigger.el, prompt.el, chip);
+      if (nested) {
+        modelRead = await readModelMenu(ctx, nested, chip, prompt.el);
+        trace.push({ step: 'model-menu-read', detail: `${modelRead.options.length} model option(s) through the nested menu` });
+      }
     }
     const result = summarize(options, modelRead.options, trigger, trigger.strategy, chip, modelTrigger);
+    result.trace = trace;
+    result.click = click;
     // A menu that is not the generation settings menu must never be summarised as
     // settings: without this check, an unrelated menu's selected option (a view
     // option like "dashboardGrid") would be reported as Flow's model. The live
@@ -100,26 +111,56 @@ function chipText(chip) {
 }
 
 /**
- * Apply each requested setting through Flow's popover, verifying every step.
- * A click is never success by itself: after each change the observable state —
- * the model chip's own text, or the menu's selected option for what the chip does
- * not show (mode) — must agree with the requested value.
+ * Apply the requested settings through Flow's popover, verifying every step.
+ *
+ * - The menu is opened ONCE for all settings (not once per key).
+ * - A key the model chip already confirms is SKIPPED: no menu interaction at all
+ *   when the chip already reflects every requested setting.
+ * - A click is never success by itself: after each change the observable state —
+ *   the model chip's own text, or the menu's selected option for what the chip does
+ *   not show (mode) — must agree with the requested value.
  * @param {Partial<Record<SettingKey, string>>} target
  */
 export async function applyFlowSettings(ctx, target) {
-  for (const key of SETTING_KEYS) {
-    const wanted = target?.[key];
-    if (!wanted) continue;
-
-    const prompt = requirePromptBox(ctx.doc);
-    const trigger = await requireSettingsTrigger(ctx, prompt);
-    const chip = findDetectedSettings(ctx.doc, prompt.el);
-    const popover = await openSettingsPopover(ctx, trigger.el, prompt.el);
-    let nested = null;
-    try {
-      const options = readPopoverOptions(popover);
+  const trace = [];
+  const prompt = requirePromptBox(ctx.doc);
+  const chip = findDetectedSettings(ctx.doc, prompt.el);
+  // Keys the chip already confirms need no interaction at all.
+  const chipKeys = ['model', 'aspectRatio', 'outputs'];
+  const skipped = SETTING_KEYS.filter(
+    (key) => target?.[key] && chipKeys.includes(key) && chip[key] && sameName(chip[key], target[key]),
+  );
+  const pending = SETTING_KEYS.filter((key) => target?.[key] && !skipped.includes(key));
+  for (const key of skipped) trace.push({ step: 'already-correct', detail: `${labelFor(key)} "${target[key]}" is already what the chip shows — skipped` });
+  if (!pending.length) {
+    // Everything requested is already in place: no menu, no clicks.
+    trace.push({ step: 'skipped-all', detail: 'the chip already reflects every requested setting' });
+    return {
+      current: { mode: null, model: chip.model, aspectRatio: chip.aspectRatio, outputs: chip.outputs },
+      options: { mode: [], model: [], aspectRatio: [], outputs: [] },
+      strategy: 'chip-verified; no menu interaction',
+      skipped: true,
+      trace,
+      chipModel: chip.model ?? null,
+      chipAspectRatio: chip.aspectRatio ?? null,
+      chipOutputs: chip.outputs ?? null,
+    };
+  }
+  const trigger = await requireSettingsTrigger(ctx, prompt);
+  trace.push({ step: 'trigger-found', detail: `${trigger.strategy}: "${String(trigger.label ?? '').slice(0, 40)}"` });
+  const { popover, click } = await openSettingsPopover(ctx, trigger, prompt.el, chip);
+  trace.push({ step: 'menu-opened', detail: `popover detected after clicking ${click.control}` });
+  let nested = null;
+  let changed = false;
+  try {
+    const options = readPopoverOptions(popover);
+    // Model last: its nested menu replaces the surface the other keys are read from.
+    const ordered = [...pending.filter((key) => key !== 'model'), ...(pending.includes('model') ? ['model'] : [])];
+    for (const key of ordered) {
+      const wanted = target[key];
       if (key === 'model') {
         nested = await selectModel(ctx, popover, options, wanted, chip, prompt.el);
+        changed = true;
       } else {
         const match = options.find((option) => classifySettingOption(option, { chipModel: chip.model }) === key && sameName(option.name, wanted));
         if (!match) {
@@ -134,21 +175,28 @@ export async function applyFlowSettings(ctx, target) {
         if (!match.selected && !isSelected(match.el)) {
           clickElement(match.el);
           await ctx.sleep(ctx.timings.settleMs);
+          changed = true;
+          trace.push({ step: 'clicked', detail: `${labelFor(key)} "${wanted}"` });
+        } else {
+          trace.push({ step: 'already-selected', detail: `${labelFor(key)} "${wanted}" is already selected` });
         }
       }
       // Verify THIS selection against observable UI state, not against the click.
-      const verified = await verifySetting(ctx, key, wanted, prompt, popover);
+      const verified = await verifySetting(ctx, key, wanted, prompt);
       if (!verified.ok) {
         throw new AutomationError(ERROR_CODES.FLOW_SETTING_FAILED, verified.message);
       }
-    } finally {
-      // A menu that stays open would block the next step; close it either way.
-      if (nested) await closePopover(ctx, nested);
-      if (findOpenPopover(ctx.doc) === popover) await closePopover(ctx, popover);
-      else await waitForClosed(ctx, popover);
+      trace.push({ step: 'verified', detail: `${labelFor(key)} "${wanted}" confirmed by ${key === 'mode' ? 'the menu' : 'the model chip'}` });
     }
+  } finally {
+    // A menu that stays open would block the next step; close it either way.
+    if (nested) await closePopover(ctx, nested);
+    if (findOpenPopover(ctx.doc) === popover) await closePopover(ctx, popover);
+    else await waitForClosed(ctx, popover);
   }
   const result = await readFlowSettings(ctx);
+  result.trace = [...trace, ...(result.trace ?? []), { step: 'final-read', detail: changed ? 're-read after changes' : 're-read to confirm' }];
+  result.click = click;
   for (const key of SETTING_KEYS) {
     const wanted = target?.[key];
     if (!wanted) continue;
@@ -187,7 +235,7 @@ async function selectModel(ctx, popover, options, wanted, chip, promptEl) {
     }
     return null;
   }
-  let menu = await openNestedMenu(ctx, popover, modelTrigger.el, promptEl);
+  let menu = await openNestedMenu(ctx, popover, modelTrigger.el, promptEl, chip);
   if (!menu) {
     throw new AutomationError(
       ERROR_CODES.FLOW_SETTING_FAILED,
@@ -214,7 +262,7 @@ async function selectModel(ctx, popover, options, wanted, chip, promptEl) {
         `Flow does not offer model "${wanted}".${models.length ? ` The model list offers: ${models.map((option) => option.name).join(', ')}.` : ''}`,
       );
     }
-    const next = await openNestedMenu(ctx, menu, family.el, promptEl);
+    const next = await openNestedMenu(ctx, menu, family.el, promptEl, chip);
     if (!next) {
       throw new AutomationError(ERROR_CODES.FLOW_SETTING_FAILED, `The model family "${family.name}" did not open.`);
     }
@@ -230,7 +278,7 @@ async function selectModel(ctx, popover, options, wanted, chip, promptEl) {
  * on the chip, so it is verified by re-reading the menu's selected option (opening
  * the menu again when the choice closed it).
  */
-async function verifySetting(ctx, key, wanted, prompt, popover) {
+async function verifySetting(ctx, key, wanted, prompt) {
   const chip = findDetectedSettings(ctx.doc, prompt.el);
   const chipValue = key === 'model' ? chip.model : key === 'aspectRatio' ? chip.aspectRatio : key === 'outputs' ? chip.outputs : null;
   if (chipValue) {
@@ -265,7 +313,8 @@ async function readSelectedFromMenu(ctx, key, wanted, prompt) {
   let opened = false;
   if (!menu) {
     const trigger = await requireSettingsTrigger(ctx, prompt);
-    menu = await openSettingsPopover(ctx, trigger.el, prompt.el);
+    const chip = findDetectedSettings(ctx.doc, prompt.el);
+    ({ popover: menu } = await openSettingsPopover(ctx, trigger, prompt.el, chip));
     opened = true;
   }
   try {
@@ -279,27 +328,74 @@ async function readSelectedFromMenu(ctx, key, wanted, prompt) {
   }
 }
 
-async function openSettingsPopover(ctx, triggerEl, promptEl = null) {
-  const existing = findOpenPopover(ctx.doc, { exclude: promptEl });
+/**
+ * Open the generation settings menu by clicking the trigger's CONTROL (the visible
+ * label is often a child of the real button), and wait for the menu in the WHOLE
+ * document: role-based surfaces in any shadow root (three levels) and portals, then
+ * a menu recognised by its CONTENT (Flow's menu can be a role-less custom element).
+ *
+ * A click is never assumed to have worked: when no menu appears, the trigger is
+ * re-found once (Flow rerenders the composer, and a click on a detached element goes
+ * nowhere) and clicked again — one bounded retry, not blind clicking. If the menu
+ * still does not open, the DOM change the click caused is captured and reported, so
+ * the blocker can be identified instead of guessed at.
+ *
+ * @returns {Promise<{popover: Element, click: object}>}
+ */
+async function openSettingsPopover(ctx, trigger, promptEl, chip = null) {
+  const chipModel = chip?.model ?? null;
+  const existing = findSettingsMenu(ctx.doc, { exclude: promptEl, chipModel });
   if (existing) {
     await closePopover(ctx, existing);
   }
-  const name = accessibleName(triggerEl).slice(0, 40) || '(no accessible name)';
-  clickElement(triggerEl);
-  const popover = await waitForValue(() => findOpenPopover(ctx.doc, { exclude: promptEl }), {
+  const control = trigger?.el ?? trigger;
+  const label = trigger?.label ?? accessibleName(control).slice(0, 40) ?? '(no accessible name)';
+  const before = snapshotMenuish(ctx.doc, { chipModel });
+  const wasConnected = control.isConnected;
+  let popover = await clickAndWait(ctx, control, promptEl, chipModel);
+  let retried = false;
+  if (!popover) {
+    // One bounded retry with a FRESH trigger: Flow replaces composer elements on
+    // rerender, and a click on a detached node opens nothing.
+    const fresh = findSettingsTrigger(ctx.doc, promptEl);
+    const freshControl = fresh?.el ?? null;
+    if (freshControl && freshControl !== control && freshControl.isConnected) {
+      retried = true;
+      popover = await clickAndWait(ctx, freshControl, promptEl, chipModel);
+    }
+  }
+  const after = snapshotMenuish(ctx.doc, { chipModel });
+  const diff = diffSignatures(before, after);
+  const click = {
+    control: `${control.tagName.toLowerCase()}.${(control.getAttribute('class') ?? '').slice(0, 40)}`,
+    label: String(label).slice(0, 60),
+    clicked: wasConnected,
+    retried,
+    domAdded: diff.added.slice(0, 12),
+    domRemoved: diff.removed.slice(0, 12),
+  };
+  if (!popover) {
+    // Say WHICH control was clicked, and WHAT the click changed: "did not open" is
+    // only actionable with that evidence.
+    const changed = diff.added.length ? ` The click added to the DOM: ${diff.added.slice(0, 8).join('; ')}.` : ' The click changed nothing visible in the DOM.';
+    throw new AutomationError(
+      ERROR_CODES.FLOW_UI_CHANGED,
+      `The Flow settings menu did not open after clicking "${label}". No menu appeared within ${Math.round(ctx.timings.popoverMs / 1000)}s.${changed} ` +
+        'The control may not open the settings menu in this Flow layout. Run "Check Flow page" in Settings for the full report.',
+    );
+  }
+  return { popover, click };
+}
+
+/** Click the control and wait for a menu to appear anywhere in the document. */
+async function clickAndWait(ctx, control, promptEl, chipModel) {
+  if (!control.isConnected) return null;
+  clickElement(control);
+  return waitForValue(() => findSettingsMenu(ctx.doc, { exclude: promptEl, chipModel }), {
     timeoutMs: ctx.timings.popoverMs,
     intervalMs: 80,
     sleep: ctx.sleep,
   });
-  if (!popover) {
-    // Say WHICH control was clicked: "did not open" is only actionable with that.
-    throw new AutomationError(
-      ERROR_CODES.FLOW_UI_CHANGED,
-      `The Flow settings menu did not open after clicking "${name}". No dialog, menu or listbox appeared within ${Math.round(ctx.timings.popoverMs / 1000)}s. ` +
-        'The control may not open the settings menu in this Flow layout. Run "Check Flow page" in Settings for the full report.',
-    );
-  }
-  return popover;
 }
 
 async function closePopover(ctx, popover) {
@@ -326,10 +422,10 @@ async function waitForClosed(ctx, popover) {
  * The nested surface can sit beside the parent menu or inside it; pickNewMenuSurface
  * resolves either shape. Returns null when nothing new opens.
  */
-async function openNestedMenu(ctx, parentMenu, triggerEl, promptEl) {
+async function openNestedMenu(ctx, parentMenu, triggerEl, promptEl, chip = null) {
   clickElement(triggerEl);
   await ctx.sleep(ctx.timings.settleMs);
-  return waitForValue(() => pickNewMenuSurface(ctx.doc, parentMenu, promptEl), {
+  return waitForValue(() => pickNewMenuSurface(ctx.doc, parentMenu, promptEl, { chipModel: chip?.model ?? null }), {
     timeoutMs: ctx.timings.popoverMs,
     intervalMs: 80,
     sleep: ctx.sleep,
@@ -354,7 +450,7 @@ async function readModelMenu(ctx, menu, chip, promptEl, depth = 0) {
   if (direct) return { options: models, selected: direct.name };
   const family = models.find((option) => isModelSubmenuTrigger(option) && chip.model && containsName(chip.model, option.name));
   if (!family) return { options: models, selected: null };
-  const nested = await openNestedMenu(ctx, menu, family.el, promptEl);
+  const nested = await openNestedMenu(ctx, menu, family.el, promptEl, chip);
   if (!nested) return { options: models, selected: null };
   return readModelMenu(ctx, nested, chip, promptEl, depth + 1);
 }

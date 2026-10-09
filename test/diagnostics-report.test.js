@@ -359,3 +359,65 @@ test('the report shows output counts in the detected line, the read attempt and 
   assert.match(text, / - chip shows: 16:9 \u00b7 x1/);
   assert.match(text, / - the model list is nested behind "Select model family" \(it was opened and read\)/);
 });
+
+test('the report carries the settings-trigger inspection, the click evidence and the trace', () => {
+  const text = formatDiagnosticsReport({
+    ...REPORT,
+    settingsTrigger: {
+      found: true,
+      strategy: 'settings-trigger-aria-haspopup',
+      ambiguous: false,
+      label: '🍌 Nano Banana 2.1 crop_16_9 x1',
+      control: {
+        tag: 'button',
+        classes: 'settings-trigger-button',
+        role: '',
+        name: '🍌 Nano Banana 2.1 crop_16_9 x1',
+        rect: { x: 24, y: 812, width: 180, height: 32 },
+        visible: true,
+        enabled: true,
+        connected: true,
+        inComposer: true,
+        via: 'ancestor-1',
+      },
+      foundElement: { tag: 'span', classes: 'model-chip', interactive: false },
+      expectedButton: { exists: true, tag: 'button', classes: 'settings-trigger-button', role: '', name: '🍌 Nano Banana 2.1 crop_16_9 x1', rect: null, visible: true, enabled: true },
+      associatedWithChip: true,
+      coveredBy: null,
+      customAncestors: ['flow-base-prompt-box'],
+    },
+    settingsRead: {
+      attempted: true,
+      ok: false,
+      error: 'The Flow settings menu did not open after clicking "🍌 Nano Banana 2.1 crop_16_9 x1". The click changed nothing visible in the DOM.',
+      code: 'FLOW_UI_CHANGED',
+      click: {
+        control: 'button.settings-trigger-button',
+        label: '🍌 Nano Banana 2.1 crop_16_9 x1',
+        clicked: true,
+        retried: true,
+        domAdded: ['flow:div.flow-settings-menu', 'row:Image', 'row:16:9'],
+        domRemoved: [],
+      },
+      trace: [
+        { step: 'trigger-found', detail: 'settings-trigger-aria-haspopup: "🍌 Nano Banana 2.1 crop_16_9 x1"' },
+        { step: 'menu-opened', detail: 'popover detected after clicking button.settings-trigger-button' },
+      ],
+    },
+  });
+  assert.match(text, /Settings trigger \(read-only inspection\):/);
+  assert.match(text, / - found \(settings-trigger-aria-haspopup\): label "🍌 Nano Banana 2\.1 crop_16_9 x1"/);
+  assert.match(text, / - control: <button class="settings-trigger-button"> "🍌 Nano Banana 2\.1 crop_16_9 x1" 180x32 at \(24, 812\) — visible: true, enabled: true, connected: true, in composer: true, resolved via ancestor-1/);
+  assert.match(text, / - the found element <span> is a LABEL, not a control \(resolved to the control above\)/);
+  assert.match(text, / - expected button \(candidate\): <button class="settings-trigger-button"> "🍌 Nano Banana 2\.1 crop_16_9 x1" visible: true/);
+  assert.match(text, / - associated with the model chip: true/);
+  assert.match(text, / - covered by another element: no/);
+  assert.match(text, / - custom-element ancestors: flow-base-prompt-box/);
+  assert.match(text, /Settings-menu click evidence:/);
+  assert.match(text, / - clicked: button\.settings-trigger-button "🍌 Nano Banana 2\.1 crop_16_9 x1" \(retried once with a fresh element\)/);
+  assert.match(text, / - DOM added after the click: flow:div\.flow-settings-menu; row:Image; row:16:9/);
+  assert.match(text, / - DOM removed after the click: nothing/);
+  assert.match(text, /Settings read trace:/);
+  assert.match(text, / - trigger-found: settings-trigger-aria-haspopup/);
+  assert.match(text, / - menu-opened: popover detected after clicking button\.settings-trigger-button/);
+});

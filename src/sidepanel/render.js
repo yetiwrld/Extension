@@ -445,6 +445,13 @@ function renderDiagnosticsExtras(diagnostics) {
   const chipLine = chipModel
     ? `<div class="check is-ok"><span class="check-icon">\u2713</span><span><span class="check-label">Model chip</span> <span class="check-detail">the composer shows ${esc(chipModel)}</span></span></div>`
     : '';
+  // The settings trigger inspection (read-only): the control the extension clicks.
+  const trigger = diagnostics.settingsTrigger;
+  const triggerLine = trigger?.found
+    ? `<div class=\"check\"><span class=\"check-icon">\u2139</span><span><span class=\"check-label\">Settings trigger</span> <span class=\"check-detail\">${esc(
+        `${trigger.control ? `<${trigger.control.tag}${trigger.control.classes ? ` class="${trigger.control.classes}"` : ''}>` : ''} "${trigger.label ?? ''}"${trigger.control ? ` · visible: ${trigger.control.visible}, enabled: ${trigger.control.enabled}` : ''}`,
+      )}</span></span></div>`
+    : '';
   // The settings-read attempt: which control was clicked, whether the menu opened.
   const read = diagnostics.settingsRead;
   const readLine = read?.attempted
@@ -513,7 +520,7 @@ function renderDiagnosticsExtras(diagnostics) {
         )
         .join('')}</ul></details>`
     : '';
-  return `${detectedLine}${chipLine}${readLine}${framesLine}${selectorsBlock}${candidatesBlock}${controlsBlock}${exceptionsBlock}
+  return `${detectedLine}${chipLine}${triggerLine}${readLine}${framesLine}${selectorsBlock}${candidatesBlock}${controlsBlock}${exceptionsBlock}
     <div class="row"><button type="button" class="btn btn-secondary btn-sm" data-action="copy-diagnostics">Copy report</button></div>`;
 }
 

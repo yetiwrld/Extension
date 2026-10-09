@@ -27,6 +27,14 @@
  *                    "🍌 Nano Banana 2.1 crop_16_9 x1" (model + ratio + outputs)
  *   liveMenuDeep     the model submenu lists FAMILIES first; a family opens the models
  *   chipStale        the chip never updates its text (verification must fail loudly)
+ *   flowComponents   the community DOM reference's shape: a flow-base-prompt-box
+ *                    custom element whose SHADOW holds div.submit-controls with
+ *                    button.settings-trigger-button (the visible model label is a
+ *                    CHILD of the button), a flow-rich-text-editor.prompt-input
+ *                    custom element whose shadow holds div.ProseMirror, a
+ *                    flow-generate-icon-button with button.generate-icon-button,
+ *                    and a settings menu rendered in a PORTAL at the body level
+ *                    with NO ARIA roles (content-based detection must find it)
  */
 
 export const FIXTURE_CATALOG = Object.freeze({
@@ -61,6 +69,7 @@ export function installFlowFixture(
     liveMenu = false,
     liveMenuDeep = false,
     chipStale = false,
+    flowComponents = false,
   } = {},
 ) {
   const doc = window.document;
@@ -126,18 +135,61 @@ export function installFlowFixture(
 
   const $ = (sel) => doc.querySelector(sel);
   const slot = $('#prompt-slot');
-  const generateBtn = $('#generate');
-  const settingsBtn = $('#settings-btn');
-  const addBtn = $('#add-btn');
-  const agentBtn = $('#agent');
-  const overlay = $('#overlay-root');
-  const refsEl = $('#refs');
-  const resultsEl = $('#results');
+  let generateBtn = $('#generate');
+  let settingsBtn = $('#settings-btn');
+  let addBtn = $('#add-btn');
+  let agentBtn = $('#agent');
+  let overlay = $('#overlay-root');
+  let refsEl = $('#refs');
+  let resultsEl = $('#results');
   let promptEl = null;
+
+  // The community DOM reference's shape: custom elements with shadow roots, the
+  // model label INSIDE the settings button, and the menu in a body-level portal.
+  let componentShadow = null;
+  if (flowComponents) {
+    doc.body.innerHTML = `
+    <main>
+      <header class="top"><button type="button" aria-label="Create new project">New project</button>${gear}</header>
+      <section class="results" id="results" aria-label="Results"></section>
+      <flow-base-prompt-box id="prompt-box"></flow-base-prompt-box>
+      <div id="overlay-root"></div>
+    </main>`;
+    const box = doc.getElementById('prompt-box');
+    componentShadow = box.attachShadow({ mode: 'open' });
+    componentShadow.innerHTML = `
+      <div class="composer">
+        <flow-rich-text-editor class="prompt-input"></flow-rich-text-editor>
+        <div class="submit-controls">
+          <button type="button" id="settings-btn" class="settings-trigger-button" aria-haspopup="menu" aria-expanded="false">
+            <span class="model-chip">${chipText()}</span>
+          </button>
+          <flow-generate-icon-button></flow-generate-icon-button>
+        </div>
+      </div>`;
+    const editorHost = componentShadow.querySelector('flow-rich-text-editor');
+    const editorShadow = editorHost.attachShadow({ mode: 'open' });
+    editorShadow.innerHTML = `<div class="ProseMirror" id="prompt" contenteditable="true" role="textbox" aria-placeholder="What do you want to create?"></div>`;
+    const generateHost = componentShadow.querySelector('flow-generate-icon-button');
+    const generateShadow = generateHost.attachShadow({ mode: 'open' });
+    generateShadow.innerHTML = `<button type="button" id="generate" class="generate-icon-button" aria-label="Generate"><span class="material-symbols">arrow_forward</span></button>`;
+    settingsBtn = componentShadow.getElementById('settings-btn');
+    generateBtn = generateShadow.getElementById('generate');
+    promptEl = editorShadow.getElementById('prompt');
+    // body.innerHTML was replaced: re-resolve the document-level elements.
+    overlay = doc.getElementById('overlay-root');
+    resultsEl = doc.getElementById('results');
+    refsEl = doc.getElementById('refs');
+    promptEl.addEventListener('input', syncGenerate);
+    promptEl.addEventListener('keyup', syncGenerate);
+    addBtn = null;
+    agentBtn = null;
+    syncGenerate();
+  }
 
   /** Insert the composer for this variant (standard layouts) and wire its events. */
   function attachComposer() {
-    if (agentLayout) return; // the Agent chat input is already the composer
+    if (agentLayout || flowComponents) return; // the composer is already in place
     slot.innerHTML = COMPOSER_HTML[variant] ?? COMPOSER_HTML.textarea;
     promptEl = $('#prompt');
     if (!promptEl) return;
@@ -155,7 +207,9 @@ export function installFlowFixture(
 
   function renderSettingsButton() {
     if (chipStale) return; // the chip never updates: verification must fail loudly
-    settingsBtn.textContent = chipText();
+    const chipEl = settingsBtn.querySelector?.('.model-chip');
+    if (chipEl) chipEl.textContent = chipText(); // the label lives inside the button
+    else settingsBtn.textContent = chipText();
   }
 
   // ---------------------------------------------------------------------------
@@ -169,11 +223,12 @@ export function installFlowFixture(
   };
 
   function liveRadio(key, value) {
-    return `<div role="menuitemradio" data-key="${key}" data-value="${value}" aria-checked="${state[key] === value ? 'true' : 'false'}">${value}</div>`;
+    const role = flowComponents ? '' : ' role="menuitemradio"';
+    return `<div${role} data-key="${key}" data-value="${value}" aria-checked="${state[key] === value ? 'true' : 'false'}">${value}</div>`;
   }
 
   function wireLiveRadios() {
-    for (const item of overlay.querySelectorAll('[role="menuitemradio"]')) {
+    for (const item of overlay.querySelectorAll('[data-key]')) {
       item.addEventListener('click', () => {
         const key = item.dataset.key;
         if (key === 'outputCount') state.outputCount = item.dataset.value;
@@ -188,10 +243,10 @@ export function installFlowFixture(
 
   function openModelList(family) {
     overlay.innerHTML = `
-      <div role="menu" aria-label="Model family" data-popover="model-list">
-        ${LIVE_MODELS[family].map((name) => `<div role="menuitemradio" data-key="model" data-value="${name}" aria-checked="${state.model === name ? 'true' : 'false'}">${name}</div>`).join('')}
+      ${flowComponents ? '<div class="flow-settings-menu model-menu">' : '<div role="menu" aria-label="Model family" data-popover="model-list">'}
+        ${LIVE_MODELS[family].map((name) => `<div${flowComponents ? '' : ' role="menuitemradio"'} data-key="model" data-value="${name}" aria-checked="${state.model === name ? 'true' : 'false'}">${name}</div>`).join('')}
       </div>`;
-    for (const item of overlay.querySelectorAll('[role="menuitemradio"]')) {
+    for (const item of overlay.querySelectorAll('[data-key="model"]')) {
       item.addEventListener('click', () => {
         state.model = item.dataset.value;
         renderSettingsButton();
@@ -204,13 +259,13 @@ export function installFlowFixture(
     if (!liveMenuDeep) {
       // Flat shape: the nested menu lists every model directly.
       overlay.innerHTML = `
-        <div role="menu" aria-label="Model family" data-popover="model-list">
+        ${flowComponents ? '<div class="flow-settings-menu model-menu">' : '<div role="menu" aria-label="Model family" data-popover="model-list">'}
           ${Object.values(LIVE_MODELS)
             .flat()
-            .map((name) => `<div role="menuitemradio" data-key="model" data-value="${name}" aria-checked="${state.model === name ? 'true' : 'false'}">${name}</div>`)
+            .map((name) => `<div${flowComponents ? '' : ' role="menuitemradio"'} data-key="model" data-value="${name}" aria-checked="${state.model === name ? 'true' : 'false'}">${name}</div>`)
             .join('')}
         </div>`;
-      for (const item of overlay.querySelectorAll('[role="menuitemradio"]')) {
+      for (const item of overlay.querySelectorAll('[data-key="model"]')) {
         item.addEventListener('click', () => {
           state.model = item.dataset.value;
           renderSettingsButton();
@@ -220,7 +275,7 @@ export function installFlowFixture(
       return;
     }
     overlay.innerHTML = `
-      <div role="menu" aria-label="Model family" data-popover="model-family">
+      ${flowComponents ? '<div class="flow-settings-menu family-menu">' : '<div role="menu" aria-label="Model family" data-popover="model-family">'}
         ${Object.keys(LIVE_MODELS)
           .map((family) => `<div class="family" role="menuitem" aria-haspopup="menu" data-family="${family}">${family}</div>`)
           .join('')}
@@ -232,8 +287,13 @@ export function installFlowFixture(
 
   function openLiveSettings() {
     closePopover();
+    // The component shape renders the menu in a body-level portal with NO ARIA roles:
+    // it must be found by its content, not by role-based selectors.
+    const surface = flowComponents
+      ? '<div class="flow-settings-menu">'
+      : '<div role="menu" aria-label="Generation settings" data-popover="settings">';
     overlay.innerHTML = `
-      <div role="menu" aria-label="Generation settings" data-popover="settings">
+      ${surface}
         ${liveRadio('mode', 'Image')}
         ${liveRadio('mode', 'Video')}
         ${liveRadio('aspectRatio', '16:9')}
@@ -249,7 +309,8 @@ export function installFlowFixture(
       </div>`;
     settingsBtn.setAttribute('aria-expanded', 'true');
     wireLiveRadios();
-    $('#model-family').addEventListener('click', openModelFamilyMenu);
+    const familyTrigger = overlay.querySelector('#model-family') ?? doc.getElementById('model-family');
+    familyTrigger.addEventListener('click', openModelFamilyMenu);
   }
 
   function option(group, name, selected) {
@@ -378,13 +439,15 @@ export function installFlowFixture(
     refsEl.appendChild(chip);
   }
 
-  agentBtn.addEventListener('click', () => {
-    const on = agentBtn.getAttribute('aria-checked') !== 'true';
-    agentBtn.setAttribute('aria-checked', on ? 'true' : 'false');
-  });
+  if (agentBtn) {
+    agentBtn.addEventListener('click', () => {
+      const on = agentBtn.getAttribute('aria-checked') !== 'true';
+      agentBtn.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+  }
 
   function syncGenerate() {
-    if (!promptEl) return;
+    if (!promptEl || !generateBtn) return;
     const empty = !(promptEl.value ?? promptEl.textContent ?? '').trim();
     generateBtn.disabled = empty;
   }
@@ -395,17 +458,19 @@ export function installFlowFixture(
     promptEl.addEventListener('keyup', syncGenerate);
   }
 
-  generateBtn.addEventListener('click', () => {
-    if (generateBtn.disabled || !promptEl) return;
-    const text = (promptEl.value ?? promptEl.textContent ?? '').trim();
-    state.submitted.push(text);
-    state.generating += 1;
-    const bar = doc.createElement('div');
-    bar.setAttribute('role', 'progressbar');
-    bar.className = 'progress';
-    bar.dataset.gen = String(state.submitted.length);
-    resultsEl.appendChild(bar);
-  });
+  if (generateBtn) {
+    generateBtn.addEventListener('click', () => {
+      if (generateBtn.disabled || !promptEl) return;
+      const text = (promptEl.value ?? promptEl.textContent ?? '').trim();
+      state.submitted.push(text);
+      state.generating += 1;
+      const bar = doc.createElement('div');
+      bar.setAttribute('role', 'progressbar');
+      bar.className = 'progress';
+      bar.dataset.gen = String(state.submitted.length);
+      resultsEl.appendChild(bar);
+    });
+  }
 
   function finishGeneration() {
     const bars = resultsEl.querySelectorAll('[role="progressbar"]');
