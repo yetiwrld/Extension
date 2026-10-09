@@ -22,6 +22,11 @@
  *                    options like "dashboardGrid"), reproducing the misread
  *   chipOpensViewMenu the chip itself opens the view menu (wrong menu, right control)
  *   chipDead         the chip opens nothing at all (the "menu did not open" path)
+ *   liveMenu         the LIVE menu shape: mode + aspect ratios + output counts +
+ *                    a nested "Select model family" submenu, and a chip that shows
+ *                    "🍌 Nano Banana 2.1 crop_16_9 x1" (model + ratio + outputs)
+ *   liveMenuDeep     the model submenu lists FAMILIES first; a family opens the models
+ *   chipStale        the chip never updates its text (verification must fail loudly)
  */
 
 export const FIXTURE_CATALOG = Object.freeze({
@@ -45,13 +50,25 @@ const COMPOSER_HTML = {
 
 export function installFlowFixture(
   window,
-  { variant = 'textarea', flowWithMissingUpload = false, lateComposerMs = 60, chipPlain = false, gearMenu = false, chipOpensViewMenu = false, chipDead = false } = {},
+  {
+    variant = 'textarea',
+    flowWithMissingUpload = false,
+    lateComposerMs = 60,
+    chipPlain = false,
+    gearMenu = false,
+    chipOpensViewMenu = false,
+    chipDead = false,
+    liveMenu = false,
+    liveMenuDeep = false,
+    chipStale = false,
+  } = {},
 ) {
   const doc = window.document;
   const state = {
     mode: 'Image',
-    model: 'Nano Banana Pro',
+    model: liveMenu ? 'Nano Banana 2.1' : 'Nano Banana Pro',
     aspectRatio: '16:9',
+    outputCount: 'x1',
     references: [],
     generating: 0,
     outputs: 0,
@@ -60,9 +77,13 @@ export function installFlowFixture(
   };
 
   const agentLayout = variant === 'agent';
-  const chip = chipPlain
-    ? `<div id="settings-btn" class="model-chip">${state.model} \u25be</div>`
-    : `<button type="button" id="settings-btn" aria-haspopup="menu" aria-expanded="false">${state.model} \u25be</button>`;
+  const chipText = () =>
+    liveMenu
+      ? `\uD83C\uDF4C ${state.model} crop_${state.aspectRatio.replace(':', '_')} ${state.outputCount}`
+      : `${state.model} \u25be`;
+  const chip = liveMenu || chipPlain
+    ? `<div id="settings-btn" class="model-chip">${chipText()}</div>`
+    : `<button type="button" id="settings-btn" aria-haspopup="menu" aria-expanded="false">${chipText()}</button>`;
   const gear = gearMenu ? '<button type="button" id="gear" aria-haspopup="menu" aria-label="Settings">\u2699</button>' : '';
   doc.body.innerHTML = agentLayout
     ? `
@@ -133,7 +154,102 @@ export function installFlowFixture(
   }
 
   function renderSettingsButton() {
-    settingsBtn.textContent = `${state.model} \u25be`;
+    if (chipStale) return; // the chip never updates: verification must fail loudly
+    settingsBtn.textContent = chipText();
+  }
+
+  // ---------------------------------------------------------------------------
+  // The LIVE menu shape: mode, aspect ratios, output counts, and the model list
+  // nested behind "Select model family". The chip shows model + ratio + outputs.
+  // ---------------------------------------------------------------------------
+
+  const LIVE_MODELS = {
+    'Nano Banana': ['Nano Banana 2.1', 'Nano Banana Pro'],
+    Veo: ['Veo 3.1', 'Veo 3'],
+  };
+
+  function liveRadio(key, value) {
+    return `<div role="menuitemradio" data-key="${key}" data-value="${value}" aria-checked="${state[key] === value ? 'true' : 'false'}">${value}</div>`;
+  }
+
+  function wireLiveRadios() {
+    for (const item of overlay.querySelectorAll('[role="menuitemradio"]')) {
+      item.addEventListener('click', () => {
+        const key = item.dataset.key;
+        if (key === 'outputCount') state.outputCount = item.dataset.value;
+        else state[key] = item.dataset.value;
+        for (const sibling of overlay.querySelectorAll(`[data-key="${key}"]`)) {
+          sibling.setAttribute('aria-checked', sibling === item ? 'true' : 'false');
+        }
+        renderSettingsButton();
+      });
+    }
+  }
+
+  function openModelList(family) {
+    overlay.innerHTML = `
+      <div role="menu" aria-label="Model family" data-popover="model-list">
+        ${LIVE_MODELS[family].map((name) => `<div role="menuitemradio" data-key="model" data-value="${name}" aria-checked="${state.model === name ? 'true' : 'false'}">${name}</div>`).join('')}
+      </div>`;
+    for (const item of overlay.querySelectorAll('[role="menuitemradio"]')) {
+      item.addEventListener('click', () => {
+        state.model = item.dataset.value;
+        renderSettingsButton();
+        closePopover(); // a leaf model choice closes the menu, as Flow does
+      });
+    }
+  }
+
+  function openModelFamilyMenu() {
+    if (!liveMenuDeep) {
+      // Flat shape: the nested menu lists every model directly.
+      overlay.innerHTML = `
+        <div role="menu" aria-label="Model family" data-popover="model-list">
+          ${Object.values(LIVE_MODELS)
+            .flat()
+            .map((name) => `<div role="menuitemradio" data-key="model" data-value="${name}" aria-checked="${state.model === name ? 'true' : 'false'}">${name}</div>`)
+            .join('')}
+        </div>`;
+      for (const item of overlay.querySelectorAll('[role="menuitemradio"]')) {
+        item.addEventListener('click', () => {
+          state.model = item.dataset.value;
+          renderSettingsButton();
+          closePopover(); // a leaf model choice closes the menu, as Flow does
+        });
+      }
+      return;
+    }
+    overlay.innerHTML = `
+      <div role="menu" aria-label="Model family" data-popover="model-family">
+        ${Object.keys(LIVE_MODELS)
+          .map((family) => `<div class="family" role="menuitem" aria-haspopup="menu" data-family="${family}">${family}</div>`)
+          .join('')}
+      </div>`;
+    for (const item of overlay.querySelectorAll('.family')) {
+      item.addEventListener('click', () => openModelList(item.dataset.family));
+    }
+  }
+
+  function openLiveSettings() {
+    closePopover();
+    overlay.innerHTML = `
+      <div role="menu" aria-label="Generation settings" data-popover="settings">
+        ${liveRadio('mode', 'Image')}
+        ${liveRadio('mode', 'Video')}
+        ${liveRadio('aspectRatio', '16:9')}
+        ${liveRadio('aspectRatio', '4:3')}
+        ${liveRadio('aspectRatio', '1:1')}
+        ${liveRadio('aspectRatio', '3:4')}
+        ${liveRadio('aspectRatio', '9:16')}
+        <div id="model-family" role="menuitem" aria-haspopup="menu">Select model family</div>
+        ${liveRadio('outputCount', 'x1')}
+        ${liveRadio('outputCount', 'x2')}
+        ${liveRadio('outputCount', 'x3')}
+        ${liveRadio('outputCount', 'x4')}
+      </div>`;
+    settingsBtn.setAttribute('aria-expanded', 'true');
+    wireLiveRadios();
+    $('#model-family').addEventListener('click', openModelFamilyMenu);
   }
 
   function option(group, name, selected) {
@@ -178,6 +294,11 @@ export function installFlowFixture(
 
   settingsBtn.addEventListener('click', () => {
     if (chipDead) return; // the control opens nothing
+    if (liveMenu) {
+      if (settingsBtn.getAttribute('aria-expanded') === 'true') closePopover();
+      else openLiveSettings();
+      return;
+    }
     if (chipOpensViewMenu) {
       // The right control, the wrong menu: a view menu, not generation settings.
       closePopover();

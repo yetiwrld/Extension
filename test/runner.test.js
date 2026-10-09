@@ -370,3 +370,29 @@ test('a setting that Flow does not keep stops the scene before anything is uploa
   assert.equal(flow.state.submits.length, 0);
   assert.equal(flow.state.calls.filter((call) => Array.isArray(call) && call[0] === 'attach').length, 0);
 });
+
+test('the scene workflow pins the output count to x1 when Flow offers output counts', async () => {
+  const { runner, flow } = await createRunner({
+    flowScript: {
+      settings: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9', outputs: 'x3' },
+      options: { outputs: ['x1', 'x2', 'x3', 'x4'] },
+    },
+  });
+  await runner.start({ tabId: 1 });
+  await runner.whenIdle();
+  const applied = flow.state.calls.filter((call) => Array.isArray(call) && call[0] === 'applySettings');
+  assert.ok(applied.length > 0);
+  for (const call of applied) {
+    assert.equal(call[1].outputs, 'x1', 'every scene is generated with a single output');
+  }
+  assert.equal(flow.state.settings.outputs, 'x1');
+});
+
+test('a Flow layout without output counts is left exactly as Flow shows it', async () => {
+  const { runner, flow } = await createRunner();
+  await runner.start({ tabId: 1 });
+  await runner.whenIdle();
+  const applied = flow.state.calls.filter((call) => Array.isArray(call) && call[0] === 'applySettings');
+  assert.ok(applied.length > 0);
+  assert.equal('outputs' in applied[0][1], false, 'no output count is invented for a layout that does not offer one');
+});

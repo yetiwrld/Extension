@@ -299,9 +299,10 @@ textarea:focus {
   border-color: #6a6a73;
 }
 
-/* Flow settings stack one per row until the panel is wide enough for three columns
-   (see the 560px rule below). Model names are the longest values, so full-width rows
-   are what keep them from being cut off with an ellipsis. */
+/* Flow settings stack one per row until the panel is wide enough for two columns
+   (see the 560px rule below). The longest values are model names and the state
+   labels ("Not offered in this mode"), so two columns keep every option fully
+   readable instead of cutting it off with an ellipsis. */
 .field-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1034,7 +1035,7 @@ textarea:focus {
 
 @media (min-width: 560px) {
   .field-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 }
 

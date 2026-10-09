@@ -398,3 +398,13 @@ test('the page check reports a connector that dies between the connection check 
   assert.equal(report.checks[0].ok, false);
   assert.deepEqual(report.promptCandidates, []);
 });
+
+test('the output count is a first-class Flow setting the panel can set', async () => {
+  const { controller, store, flow } = await createController();
+  await controller.handle('checkFlow');
+  await controller.settingsReadPromise;
+  const applied = await controller.handle('setFlowSetting', { key: 'outputs', value: 'x2' });
+  assert.deepEqual(applied.current, { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9', outputs: 'x2' });
+  assert.ok(flow.state.calls.some((call) => Array.isArray(call) && call[0] === 'applySettings' && call[1].outputs === 'x2'));
+  assert.equal(store.read(STORAGE_KEYS.flowSettings).current.outputs, 'x2', 'the stored settings follow the change');
+});

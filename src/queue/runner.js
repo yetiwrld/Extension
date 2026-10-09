@@ -51,7 +51,7 @@ export const DEFAULT_TIMINGS = Object.freeze({
   retryDelayMs: 3000,
 });
 
-const SETTING_LABELS = Object.freeze({ mode: 'mode', model: 'model', aspectRatio: 'aspect ratio' });
+const SETTING_LABELS = Object.freeze({ mode: 'mode', model: 'model', aspectRatio: 'aspect ratio', outputs: 'output count' });
 
 /** A status read has no side effects, so a busy page that misses one answer is asked again, this many times in all. */
 const POLL_READ_ATTEMPTS = 3;
@@ -433,6 +433,13 @@ export class AutomationRunner {
       // Capture what Flow shows now. Every scene re-applies these values before it generates.
       const result = await this.flow.readSettings();
       const target = pickTargetSettings(result?.current);
+      // This workflow generates individual scenes one at a time, so each scene runs
+      // with a single output. Pin x1 when Flow offers output counts (older layouts
+      // without the control are left exactly as Flow shows them).
+      if (Array.isArray(result?.options?.outputs) && result.options.outputs.some((option) => /^x1$/i.test(option))) {
+        target.outputs = 'x1';
+        await this.log('info', 'Output count set to x1: each scene is generated individually.');
+      }
       await this.updateAutomation({ settingsTarget: target });
       await this.store.update(STORAGE_KEYS.flowSettings, () => ({
         current: result?.current ?? {},
@@ -1122,14 +1129,14 @@ function definedOnly(patch) {
 
 function pickTargetSettings(current) {
   const target = {};
-  for (const key of ['mode', 'model', 'aspectRatio']) {
+  for (const key of ['mode', 'model', 'aspectRatio', 'outputs']) {
     if (current && current[key]) target[key] = current[key];
   }
   return target;
 }
 
 export function describeSettings(target) {
-  const parts = [target.mode, target.model, target.aspectRatio].filter(Boolean);
+  const parts = [target.mode, target.model, target.aspectRatio, target.outputs].filter(Boolean);
   return parts.length ? parts.join(' \u00b7 ') : 'as currently set in Flow';
 }
 

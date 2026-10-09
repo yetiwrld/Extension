@@ -427,7 +427,7 @@ function onChange(event) {
 }
 
 function labelOfSetting(key) {
-  return { mode: 'Mode', model: 'Model', aspectRatio: 'Aspect ratio' }[key] ?? key;
+  return { mode: 'Mode', model: 'Model', aspectRatio: 'Aspect ratio', outputs: 'Output count' }[key] ?? key;
 }
 
 function onInput(event) {

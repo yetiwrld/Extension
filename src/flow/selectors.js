@@ -25,6 +25,18 @@ const ADD_NAME = /^(?:[a-z_]+\s+)?(add|attach|upload|\+)(?:\s|$)/i;
 const REMOVE_NAME = /(remove|delete|clear|close|dismiss)/i;
 const AGENT_NAME = /\bagent\b/i;
 const ASPECT_RATIO_TEXT = /^\d{1,2}\s*:\s*\d{1,2}$/;
+/** Output-count options as Flow shows them in the settings menu and on the chip ("x1"…"x4"). */
+const OUTPUT_TEXT = /^x\s?\d{1,2}$/i;
+/**
+ * An aspect-ratio token inside the model chip's text, e.g. "crop_16_9" or "16:9".
+ * The chip concatenates model name, ratio and output count ("🍌 Nano Banana 2.1 crop_16_9 x1"),
+ * so the ratio is found as a word, not just at the start.
+ */
+const ASPECT_IN_CHIP = /(?:^|\s)(?:[a-z]+_)?(\d{1,2})\s*[_:x\u00d7]\s*(\d{1,2})(?=\s|$)/i;
+/** An output-count token inside the chip's text ("x1"). */
+const OUTPUTS_IN_CHIP = /\bx\s?(\d{1,2})\b/i;
+/** The menu item that opens the (nested) model list: "Select model family". */
+const MODEL_SUBMENU_NAME = /\b(select|choose)\b[^|]*\bmodel\b|\bmodel\b[^|]*\b(famil|librar)/i;
 /** The model-name control opens the menu with Mode, Model and Aspect ratio together. */
 const MODEL_NAME = /\b(banana|veo|gemini|omni|imagen)\b/i;
 /** Weak signals: a settings-like name, a chevron icon, a bare mode word or an aspect-ratio chip. */
@@ -93,7 +105,8 @@ const OPTION_SELECTOR = [
 /**
  * A field's identifying label. Deliberately excludes text content: for a composer
  * the text content IS the user's prompt, and diagnostics must never carry it.
- * Order: aria-label, aria-labelledby, placeholder, title.
+ * Order: aria-label, aria-labelledby, placeholder (the attribute rich-text editors
+ * use: aria-placeholder / data-placeholder), title.
  */
 function fieldLabel(el) {
   const aria = el.getAttribute('aria-label');
@@ -106,7 +119,12 @@ function fieldLabel(el) {
       .join(' ');
     if (normalizeText(text)) return normalizeText(text);
   }
-  return normalizeText(el.getAttribute('placeholder') ?? '') || normalizeText(el.getAttribute('title') ?? '');
+  return (
+    normalizeText(el.getAttribute('placeholder') ?? '') ||
+    normalizeText(el.getAttribute('aria-placeholder') ?? '') ||
+    normalizeText(el.getAttribute('data-placeholder') ?? '') ||
+    normalizeText(el.getAttribute('title') ?? '')
+  );
 }
 
 /**
@@ -206,10 +224,11 @@ function collectShadowFields(scopeDoc, push, state) {
       if (current.tagName.includes('-') && current.shadowRoot) {
         state.hosts += 1;
         for (const field of current.shadowRoot.querySelectorAll(TEXT_FIELD_SELECTOR)) {
-          push(field, { kind: 'shadow', label: `${current.tagName.toLowerCase()} shadow root` });
+          push(field, { kind: 'shadow', label: `${current.tagName.toLowerCase()} shadow root${depth ? ` (level ${depth + 1})` : ''}` });
         }
-        if (depth < 1) walk(current.shadowRoot, depth + 1);
-        if (state.fields >= 8) state.done = true;
+        // Flow's composer UI nests custom elements: descend two shadow levels, bounded.
+        if (depth < 2) walk(current.shadowRoot, depth + 1);
+        if (state.fields >= 12) state.done = true;
       }
       current = walker.nextNode();
     }
@@ -247,7 +266,7 @@ function describeCandidate(el, scope) {
     kind: candidateKind(el),
     role: el.getAttribute('role') ?? '',
     name: fieldLabel(el).slice(0, 40),
-    placeholder: (el.getAttribute('placeholder') ?? '').slice(0, 40),
+    placeholder: (el.getAttribute('placeholder') ?? el.getAttribute('aria-placeholder') ?? el.getAttribute('data-placeholder') ?? '').slice(0, 40),
     type: el.getAttribute('type') ?? '',
     contenteditable: el.getAttribute('contenteditable') ?? '',
     disabled: isDisabled(el),
@@ -275,7 +294,7 @@ function describeCandidate(el, scope) {
  * frames and shadow roots. Candidates carry their element for scoring; strip it
  * (candidateSummaries) before anything crosses the message boundary.
  */
-export function collectPromptCandidates(doc, { limit = 16 } = {}) {
+export function collectPromptCandidates(doc, { limit = 24 } = {}) {
   const out = [];
   const seen = new Set();
   const state = { scanned: 0, hosts: 0, fields: 0, done: false };
@@ -505,6 +524,9 @@ function visibleControlsWithin(node, cap = 40) {
  * search accepts both, the document-wide fallback only an explicit "Generate"
  * label, so a "Create project" or unrelated "Send" is never clicked.
  */
+/** Icon ligatures a Generate/Submit control can be made of when it has no text label. */
+const GO_ICON_NAME = /(arrow_forward|arrow_upward|arrow_outward|play_arrow|send|\u25b6|\u27a4|\u2192|\u21e8|\u2191)/i;
+
 export function findGenerateButton(doc, promptEl) {
   const region = findPromptRegion(promptEl);
   if (region) {
@@ -517,6 +539,9 @@ export function findGenerateButton(doc, promptEl) {
       const el = generate ?? nearby[nearby.length - 1];
       return { el, strategy: generate ? 'generate-in-prompt-region' : 'send-in-prompt-region' };
     }
+    // An icon-only Generate control (a material ligature, no text) still counts, in-region only.
+    const icons = visibleControlsWithin(region).filter((button) => GO_ICON_NAME.test(accessibleName(button) || ''));
+    if (icons.length) return { el: icons[icons.length - 1], strategy: 'generate-icon-in-prompt-region' };
   }
   // Document-wide fallback only accepts an explicit "Generate" label, never "Create project" style controls.
   const anywhere = queryAllVisible(doc, 'button, [role="button"]').filter((button) => /\bgenerate\b/i.test(accessibleName(button)));
@@ -693,6 +718,37 @@ export async function findPromptBoxWhenReady(doc, { timeoutMs = 2500, intervalMs
   return waitForValue(() => findPromptBox(doc), { timeoutMs, intervalMs, sleep });
 }
 
+/**
+ * Parse the model chip's text. Flow's chip concatenates the current model, the
+ * aspect ratio and the output count — e.g. "🍌 Nano Banana 2.1 crop_16_9 x1" — so
+ * the chip alone is the ground truth for three settings, read without opening
+ * any menu and without hardcoding a single model name.
+ *
+ * @returns {{model: string|null, aspectRatio: string|null, outputs: string|null}}
+ */
+export function parseModelChip(text) {
+  const raw = normalizeText(text);
+  if (!raw) return { model: null, aspectRatio: null, outputs: null };
+  const aspect = raw.match(ASPECT_IN_CHIP);
+  const outputs = raw.match(OUTPUTS_IN_CHIP);
+  // The model name is everything before the earliest settings token.
+  let end = raw.length;
+  for (const match of [aspect, outputs]) {
+    if (match && match.index < end) end = match.index;
+  }
+  // Strip decoration (emoji, chevrons, separators) from the ends; keep inner dots ("2.1").
+  const model = raw
+    .slice(0, end)
+    .replace(/^[^A-Za-z0-9]+/, '')
+    .replace(/[^A-Za-z0-9.]+$/, '')
+    .trim();
+  return {
+    model: model || null,
+    aspectRatio: aspect ? `${aspect[1]}:${aspect[2]}` : null,
+    outputs: outputs ? `x${outputs[1]}` : null,
+  };
+}
+
 /** What a control is for, from its accessible name and attributes. Used for diagnostics and prioritisation. */
 export function classifyControl(el) {
   const name = accessibleName(el);
@@ -708,25 +764,58 @@ export function classifyControl(el) {
   return 'other';
 }
 
-/** The current Mode / Model / Aspect ratio as shown by the controls themselves, when identifiable. */
+/** The model chip's raw text ("🍌 Nano Banana 2.1 crop_16_9 x1"), or null when no chip is identifiable. */
+export function findModelChipText(doc, promptEl) {
+  const region = findPromptRegion(promptEl) ?? doc;
+  const chipEls = new Set();
+  const trigger = findSettingsTrigger(doc, promptEl);
+  if (trigger) chipEls.add(trigger.el);
+  for (const item of collectModelNamedControls(region)) chipEls.add(item.el);
+  for (const el of chipEls) {
+    const text = controlLabel(el);
+    if (text) return text;
+  }
+  return null;
+}
+
+/**
+ * The current Mode / Model / Aspect ratio / output count as shown by the composer's
+ * own controls, when identifiable. The model chip is the ground truth: Flow's chip
+ * concatenates model, ratio and output count ("🍌 Nano Banana 2.1 crop_16_9 x1"),
+ * so parseModelChip reads three settings from it without opening any menu. The chip
+ * may be a plain element (no button semantics), so it is collected by name and also
+ * considered as the settings trigger's own text.
+ */
 export function findDetectedSettings(doc, promptEl) {
   const region = findPromptRegion(promptEl) ?? doc;
   let model = null;
   let aspectRatio = null;
   let mode = null;
-  // The model chip may be a plain element (no button semantics): collect it by name too.
-  const controls = [...visibleControlsWithin(region), ...collectModelNamedControls(region).map((item) => item.el)];
-  for (const el of controls) {
+  let outputs = null;
+  // 1) The chip: parse its full text (model + aspect ratio + output count).
+  const chipEls = new Set();
+  const trigger = findSettingsTrigger(doc, promptEl);
+  if (trigger) chipEls.add(trigger.el);
+  for (const item of collectModelNamedControls(region)) chipEls.add(item.el);
+  for (const el of chipEls) {
+    const parsed = parseModelChip(controlLabel(el));
+    if (!model && parsed.model) model = parsed.model;
+    if (!aspectRatio && parsed.aspectRatio) aspectRatio = parsed.aspectRatio;
+    if (!outputs && parsed.outputs) outputs = parsed.outputs;
+  }
+  // 2) Semantic controls (a labelled aspect chip, a mode chip, an outputs chip).
+  for (const el of visibleControlsWithin(region)) {
     const name = accessibleName(el);
     if (!name) continue;
     if (!model && MODEL_NAME.test(name)) {
       // The model-name control shows the active model ("Nano Banana Pro \u25be").
-      model = normalizeText(name).replace(/[\u25be\u25b4\u25bc\u25c5\u2304\u2305\u2193]+\s*$/g, '').trim() || null;
+      model = parseModelChip(name).model ?? model;
     }
     if (!aspectRatio && ASPECT_RATIO_TEXT.test(name)) aspectRatio = name;
     if (!mode && MODE_NAME.test(name)) mode = name;
+    if (!outputs && OUTPUT_TEXT.test(name)) outputs = normalizeText(name);
   }
-  return { mode, model, aspectRatio };
+  return { mode, model, aspectRatio, outputs };
 }
 
 /**
@@ -769,6 +858,75 @@ export function listPromptControls(doc, promptEl, limit = 10) {
     }
   }
   return out;
+}
+
+/**
+ * A read-only map of the composer area, for the "Check Flow page" report when the
+ * prompt box is NOT found: the model chip and its ancestor chain, every text-entry
+ * shape in the chip's region, the interactive controls there, document-wide
+ * generate-button candidates, and the custom-element hosts that can hide a shadow
+ * DOM. No element and no text content crosses the message boundary — the composer's
+ * text IS the user's prompt — only tags, roles, labels and geometry.
+ */
+export function inspectComposerArea(doc) {
+  const chip = collectModelNamedControls(doc, { limit: 4 })[0] ?? null;
+  const area = {
+    chip: null,
+    chipChain: [],
+    regionFields: [],
+    regionControls: [],
+    generateCandidates: [],
+    shadowHosts: [],
+  };
+  if (chip) {
+    const rect = chip.el.getBoundingClientRect?.();
+    area.chip = {
+      tag: chip.el.tagName.toLowerCase(),
+      role: chip.el.getAttribute('role') ?? '',
+      name: chip.name.slice(0, 60),
+      rect: rect ? { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) } : null,
+    };
+    area.chipChain = composerAncestors(chip.el, 10).map((el) => ({
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role') ?? '',
+      label: normalizeText(el.getAttribute('aria-label') ?? '').slice(0, 40),
+      childTags: Array.from(new Set(Array.from(el.children).map((child) => child.tagName.toLowerCase()))).slice(0, 12).join(','),
+    }));
+    const region = findPromptRegion(chip.el);
+    const scope = region ?? doc;
+    const fields = scope.querySelectorAll(TEXT_FIELD_SELECTOR);
+    for (const el of Array.from(fields).slice(0, 12)) {
+      const r = el.getBoundingClientRect?.();
+      area.regionFields.push({
+        tag: el.tagName.toLowerCase(),
+        role: el.getAttribute('role') ?? '',
+        kind: candidateKind(el),
+        name: fieldLabel(el).slice(0, 40),
+        readonly: el.hasAttribute('readonly'),
+        disabled: isDisabled(el),
+        visible: isVisible(el),
+        rect: r ? { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) } : null,
+      });
+    }
+    for (const control of listPromptControls(doc, chip.el, 12)) {
+      area.regionControls.push(control);
+    }
+  }
+  for (const button of queryAllVisible(doc, 'button, [role="button"]').slice(0, 12)) {
+    area.generateCandidates.push({
+      tag: button.tagName.toLowerCase(),
+      name: accessibleName(button).slice(0, 40),
+      title: (button.getAttribute('title') ?? '').slice(0, 40),
+      labelled: Boolean(GENERATE_NAME.test(accessibleName(button)) || SEND_NAME.test(accessibleName(button)) || GO_ICON_NAME.test(accessibleName(button))),
+    });
+  }
+  const hosts = [];
+  for (const el of doc.querySelectorAll('*')) {
+    if (hosts.length >= 12) break;
+    if (el.tagName.includes('-') && el.shadowRoot) hosts.push({ tag: el.tagName.toLowerCase() });
+  }
+  area.shadowHosts = hosts;
+  return area;
 }
 
 /** Visible elements whose accessible name matches any of `patterns` (bounded walk). */
@@ -821,63 +979,119 @@ function collectMenuScopes(doc) {
  * @param {{exclude?: Element|null}} [options] `exclude`: the composer; matches containing it are skipped.
  */
 export function findOpenPopover(doc, { exclude = null } = {}) {
-  const menus = [];
-  const others = [];
+  const all = collectOpenMenus(doc, { exclude });
+  const menus = all.filter((item) => item.isMenu);
+  const pool = menus.length ? menus : all;
+  return pool.length ? pool[pool.length - 1].el : null;
+}
+
+/**
+ * Every open menu surface, in document order, as `{ el, isMenu }`. A real menu or
+ * listbox beats a bare open-state wrapper or a dialog when several match.
+ */
+export function collectOpenMenus(doc, { exclude = null } = {}) {
+  const out = [];
   for (const scope of collectMenuScopes(doc)) {
     for (const el of scope.querySelectorAll(MENU_SELECTOR)) {
       if (!isVisible(el)) continue;
       if (exclude && (el === exclude || el.contains(exclude))) continue;
       const role = el.getAttribute('role');
-      if (role === 'menu' || role === 'listbox') menus.push(el);
-      else others.push(el);
+      out.push({ el, isMenu: role === 'menu' || role === 'listbox' });
     }
   }
-  const found = menus.length ? menus[menus.length - 1] : others[others.length - 1];
-  return found ?? null;
+  return out;
 }
 
-/** Options inside a popover, with the heading that introduced each group (Mode, Model, Aspect ratio...). */
+/**
+ * The menu surface that a click just opened: every open surface except `previous`
+ * itself, its ancestors, and the composer. Nested submenus (Flow's "Select model
+ * family") appear either beside the parent menu or inside it; surfaces outside the
+ * previous menu win, otherwise the last surface inside it.
+ */
+export function pickNewMenuSurface(doc, previous, promptEl = null) {
+  const candidates = collectOpenMenus(doc).filter(({ el }) => {
+    if (previous && (el === previous || el.contains(previous))) return false;
+    if (promptEl && (el === promptEl || el.contains(promptEl))) return false;
+    return true;
+  });
+  const outside = candidates.filter(({ el }) => !previous || !previous.contains(el));
+  const menus = (outside.length ? outside : candidates).filter((item) => item.isMenu);
+  const pool = menus.length ? menus : outside.length ? outside : candidates;
+  return pool.length ? pool[pool.length - 1].el : null;
+}
+
+/**
+ * Options inside a popover, with the heading that introduced each group (Mode, Model,
+ * Aspect ratio...). Structure-agnostic on purpose: Flow's menu rows are sometimes
+ * plain elements with no ARIA role at all, and a reader that only accepted
+ * role="menuitem*" found NOTHING in the real menu — which made the real
+ * generation-settings menu look like the wrong menu. An option is any visible
+ * interactive element with an accessible name, or any visible element whose OWN
+ * text (never an aggregate of its children) is short enough to be a label.
+ *
+ * Each option also reports `submenu`: the item opens another menu (e.g. Flow's
+ * "Select model family"), which the reader must inspect before choosing a model.
+ */
 export function readPopoverOptions(popover) {
   const options = [];
   const seen = new Set();
-  let currentGroup = null;
+  const nodes = [];
   const walker = popover.ownerDocument.createTreeWalker(popover, 1);
   let node = walker.currentNode;
   while (node) {
-    if (node !== popover && isVisible(node)) {
-      const role = node.getAttribute('role');
-      const text = normalizeText(node.textContent);
-      if (role === 'heading' || node.tagName === 'H2' || node.tagName === 'H3' || node.tagName === 'H4' || role === 'group') {
-        const label = normalizeText(node.getAttribute('aria-label') || text);
-        if (label && label.length <= 40) currentGroup = label;
-      } else if (node.matches(OPTION_SELECTOR) && text && text.length <= 60) {
-        const name = accessibleName(node) || text;
-        const key = `${currentGroup ?? ''}|${name}`;
-        if (!seen.has(key) && !isStructuralOnly(node)) {
-          seen.add(key);
-          options.push({
-            el: node,
-            name: normalizeText(name).replace(/\s*(check|done)\s*$/i, ''),
-            group: currentGroup,
-            selected: isSelected(node),
-          });
-        }
-      }
-    }
+    nodes.push(node);
     node = walker.nextNode();
+  }
+  let currentGroup = null;
+  for (const el of nodes) {
+    if (el === popover || !isVisible(el)) continue;
+    const role = el.getAttribute('role');
+    const isHeading = role === 'heading' || el.tagName === 'H2' || el.tagName === 'H3' || el.tagName === 'H4' || role === 'group';
+    if (isHeading) {
+      const label = normalizeText(el.getAttribute('aria-label') || ownText(el) || el.textContent);
+      if (label && label.length <= 40) currentGroup = label;
+      continue;
+    }
+    const interactive = el.matches(OPTION_SELECTOR) || el.matches(INTERACTIVE_SELECTOR);
+    const own = normalizeText(ownText(el));
+    const name = (interactive ? accessibleName(el) : own) || '';
+    // A pure wrapper (no own text, not interactive) is not an option; its children are.
+    // A name with no letter or digit is decoration (a chevron span), not an option.
+    if (!name || name.length > 60 || (!own && !interactive) || !/[A-Za-z0-9]/.test(name)) continue;
+    const key = `${currentGroup ?? ''}|${name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push({
+      el,
+      name: normalizeText(name)
+        .replace(/\s*(check|done)\s*$/i, '')
+        .replace(/[\s\u203a\u00bb\u2039\u25b8\u2032>]+$/, ''),
+      group: currentGroup,
+      selected: isSelectedWithin(el, popover),
+      submenu: el.hasAttribute('aria-haspopup') || el.getAttribute('aria-expanded') != null,
+    });
   }
   return options;
 }
 
-function isStructuralOnly(node) {
-  // Skip containers whose only job is to wrap a more specific option.
-  return node.tagName === 'LI' && node.querySelector('[role="option"],[role="menuitemradio"],[role="menuitem"],[role="radio"]');
+/**
+ * Selected state, looking at the element and its ancestors up to the menu surface:
+ * Flow marks the row (aria-checked on a wrapper), not always the innermost label.
+ */
+function isSelectedWithin(el, boundary) {
+  let node = el;
+  while (node && node !== boundary) {
+    if (isSelected(node)) return true;
+    node = node.parentElement;
+  }
+  return false;
 }
 
 export function isSelected(node) {
   if (node.getAttribute('aria-selected') === 'true') return true;
   if (node.getAttribute('aria-checked') === 'true') return true;
   if (node.getAttribute('aria-pressed') === 'true') return true;
+  if (node.getAttribute('aria-current') === 'true') return true;
   if (node.getAttribute('data-state') === 'checked' || node.getAttribute('data-state') === 'active') return true;
   return false;
 }
@@ -888,6 +1102,10 @@ export function isSelected(node) {
  * with no positive evidence is UNKNOWN (null) — never guessed as a model: the old
  * default classified any unrecognised option (a view option like "dashboardGrid"
  * in an unrelated menu) as the model, and the panel displayed it as Flow's model.
+ *
+ * Recognised keys: mode, model, aspectRatio, outputs. "Select model family" is the
+ * model list's SUBMENU trigger, not a model itself: it counts as model evidence (the
+ * menu IS the generation settings) but is never reported as the current model.
  *
  * `chipModel` is the model the composer's own chip displays. An option showing the
  * same name is the model even when the menu has no "Model" heading — that is how a
@@ -900,9 +1118,16 @@ export function classifySettingOption(option, { chipModel = null } = {}) {
   if (/^mode$/.test(group) || /^(image|video)$/i.test(name)) return 'mode';
   if (/model/.test(group)) return 'model';
   if (chipModel && normalizeText(name).toLowerCase() === normalizeText(chipModel).toLowerCase()) return 'model';
+  if (MODEL_SUBMENU_NAME.test(name)) return 'model';
+  if (OUTPUT_TEXT.test(name)) return 'outputs';
+  if (/^\d+$/.test(name) && /output|count|quantity|number/i.test(group)) return 'outputs';
   if (/output|count|length|duration|quantity/.test(group)) return null;
-  if (/^\d+$/.test(name) || /^x\d+$/i.test(name)) return null;
   return null;
+}
+
+/** True for the item that opens the (nested) model list rather than a model itself. */
+export function isModelSubmenuTrigger(option) {
+  return Boolean(option) && (option.submenu || MODEL_SUBMENU_NAME.test(option.name ?? ''));
 }
 
 /** Agent switch in the prompt box. Returns { el, on } or null. */

@@ -75,7 +75,7 @@ test('probe reports the prompt box, Generate, settings and Agent state on a proj
     probe.promptControls.some((control) => control.name === 'Nano Banana Pro \u25be' && control.purpose === 'model'),
     'the controls near the prompt are listed',
   );
-  assert.deepEqual(probe.detectedSettings, { mode: null, model: 'Nano Banana Pro', aspectRatio: null });
+  assert.deepEqual(probe.detectedSettings, { mode: null, model: 'Nano Banana Pro', aspectRatio: null, outputs: null });
   assert.equal(probe.agentOn, false);
   assert.equal(probe.isProjectPage, true);
   // The composer evidence: every text field on the page, with why it is or is not the composer.
@@ -107,7 +107,7 @@ test('probe on a non-project Flow page reports no prompt instead of guessing', a
 
 test('readSettings returns Flow\'s current values and the options it exposes, then closes the menu', async () => {
   const result = await current.adapter.readSettings();
-  assert.deepEqual(result.current, { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9' });
+  assert.deepEqual(result.current, { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9', outputs: null });
   assert.deepEqual(result.options.mode, ['Image', 'Video']);
   assert.deepEqual(result.options.model, ['Nano Banana Pro', 'Nano Banana']);
   assert.deepEqual(result.options.aspectRatio, ['16:9', '9:16', '1:1']);
@@ -251,7 +251,7 @@ test('diagnose attempts the settings read and reports the chip, the values and t
   assert.equal(report.modelChip, 'Nano Banana Pro');
   assert.equal(report.settingsRead.attempted, true);
   assert.equal(report.settingsRead.ok, true);
-  assert.deepEqual(report.settingsRead.current, { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9' });
+  assert.deepEqual(report.settingsRead.current, { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9', outputs: null });
   assert.deepEqual(report.settingsRead.options.model, ['Nano Banana Pro', 'Nano Banana']);
   assert.equal(report.settingsRead.chipModel, 'Nano Banana Pro');
   assert.equal(report.settingsRead.modelMatchesChip, true);

@@ -109,7 +109,7 @@ test('an unrecognised option is unknown, not a model (the "dashboardGrid" guard)
 test('readSettings reads the chip\u2019s menu when the chip is a plain div', async () => {
   const { adapter } = fixturePage({ chipPlain: true });
   const result = await adapter.readSettings();
-  assert.deepEqual(result.current, { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9' });
+  assert.deepEqual(result.current, { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9', outputs: null });
   assert.deepEqual(result.options.model, ['Nano Banana Pro', 'Nano Banana']);
   assert.equal(result.chipModel, 'Nano Banana Pro');
   assert.equal(result.modelMatchesChip, true);
@@ -243,7 +243,7 @@ test('diagnose reports the model chip and the settings-read attempt, success or 
   const ok = await fixturePage({ chipPlain: true }).adapter.diagnose();
   assert.equal(ok.modelChip, 'Nano Banana Pro');
   assert.equal(ok.settingsRead.ok, true);
-  assert.deepEqual(ok.settingsRead.current, { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9' });
+  assert.deepEqual(ok.settingsRead.current, { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9', outputs: null });
   const chipCheck = ok.checks.find((item) => item.label === 'Model chip');
   assert.equal(chipCheck.ok, true);
   assert.match(chipCheck.detail, /Nano Banana Pro/);

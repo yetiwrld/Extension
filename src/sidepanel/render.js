@@ -62,8 +62,9 @@ export function renderFlowSettings(snapshot, ui) {
       ? `Last read ${clock(settings.readAt)}.`
       : 'Not read yet. Open a Flow project, then press Read from Flow.';
   // Ground truth straight from the composer: the model chip's own text.
-  const chipModel = snapshot?.connection?.detectedSettings?.model ?? null;
-  const chipNote = chipModel ? `<p class="settings-note">Flow's composer shows: model ${esc(chipModel)}.</p>` : '';
+  const chipView = snapshot?.connection?.detectedSettings ?? {};
+  const chipParts = [chipView.model ? `model ${chipView.model}` : null, chipView.aspectRatio ?? null, chipView.outputs ?? null].filter(Boolean);
+  const chipNote = chipParts.length ? `<p class="settings-note">Flow's composer shows: ${esc(chipParts.join(' \u00b7 '))}.</p>` : '';
   return `
     <div class="card-head">
       <h2 id="h-flow-settings">Flow settings</h2>
@@ -74,6 +75,7 @@ export function renderFlowSettings(snapshot, ui) {
       ${settingSelect('mode', 'Mode', settings, readable && !ui.busy)}
       ${settingSelect('model', 'Model', settings, readable && !ui.busy)}
       ${settingSelect('aspectRatio', 'Aspect ratio', settings, readable && !ui.busy)}
+      ${settingSelect('outputs', 'Outputs', settings, readable && !ui.busy)}
     </div>
     <p class="settings-note">${esc(readText)}</p>
     ${chipNote}`;
@@ -81,7 +83,7 @@ export function renderFlowSettings(snapshot, ui) {
 
 /** What an empty select shows: never read / read but unknown / not offered in this mode. */
 function settingEmptyValue(key, settings, enabled) {
-  if (settings.readAt) return key === 'aspectRatio' ? 'Not offered in this mode' : 'Unknown';
+  if (settings.readAt) return key === 'aspectRatio' || key === 'outputs' ? 'Not offered in this mode' : 'Unknown';
   return enabled ? 'Not read yet' : 'Unavailable';
 }
 
@@ -433,6 +435,7 @@ function renderDiagnosticsExtras(diagnostics) {
     detected.mode ? `mode ${esc(detected.mode)}` : '',
     detected.model ? `model ${esc(detected.model)}` : '',
     detected.aspectRatio ? `aspect ratio ${esc(detected.aspectRatio)}` : '',
+    detected.outputs ? `outputs ${esc(detected.outputs)}` : '',
   ].filter(Boolean);
   const detectedLine = detectedParts.length
     ? `<div class="check is-ok"><span class="check-icon">\u2713</span><span><span class="check-label">Detected in Flow</span> <span class="check-detail">${detectedParts.join(' \u00b7 ')}</span></span></div>`
@@ -448,7 +451,7 @@ function renderDiagnosticsExtras(diagnostics) {
     ? read.ok
       ? (() => {
           const current = read.current ?? {};
-          const bits = ['mode', 'model', 'aspectRatio'].map((key) => `${key}=${current[key] ?? 'unknown'}`);
+          const bits = ['mode', 'model', 'aspectRatio', 'outputs'].map((key) => `${key}=${current[key] ?? 'unknown'}`);
           return `<div class="check is-ok"><span class="check-icon">\u2713</span><span><span class="check-label">Settings read</span> <span class="check-detail">${esc(bits.join(', '))}${read.chipModel ? ` · chip shows ${esc(read.chipModel)}` : ''}</span></span></div>`;
         })()
       : `<div class="check is-bad"><span class="check-icon">\u2715</span><span><span class="check-label">Settings read</span> <span class="check-detail">failed: ${esc(read.error ?? 'unknown error')}</span></span></div>`

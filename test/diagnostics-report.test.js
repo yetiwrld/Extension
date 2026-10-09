@@ -298,3 +298,64 @@ test('the report degrades gracefully with no data', () => {
   assert.match(text, /Prompt field candidates \(0\):/);
   assert.match(text, /Checks:/);
 });
+
+test('the report maps the composer area: chip, chain, region fields, controls, generate candidates', () => {
+  const text = formatDiagnosticsReport({
+    ...REPORT,
+    composerArea: {
+      chip: { tag: 'div', role: '', name: '🍌 Nano Banana 2.1 crop_16_9 x1', rect: { x: 24, y: 812, width: 180, height: 32 } },
+      chipChain: [
+        { tag: 'div', role: '', label: '', childTags: 'div,button' },
+        { tag: 'main', role: '', label: '', childTags: 'header,section,div' },
+      ],
+      regionFields: [
+        { tag: 'div', role: 'textbox', kind: 'contenteditable', name: 'What do you want to create?', readonly: false, disabled: false, visible: true, rect: { x: 24, y: 760, width: 640, height: 48 } },
+      ],
+      regionControls: [{ tag: 'div', role: '', name: '🍌 Nano Banana 2.1 crop_16_9 x1', title: '', popup: '', disabled: false, purpose: 'model' }],
+      generateCandidates: [
+        { tag: 'button', name: 'Generate', title: '', labelled: true },
+        { tag: 'button', name: 'New project', title: '', labelled: false },
+      ],
+      shadowHosts: [{ tag: 'flow-shell' }],
+    },
+  });
+  assert.match(text, /Composer area \(read-only DOM map\):/);
+  assert.match(text, / - model chip: <div> "🍌 Nano Banana 2\.1 crop_16_9 x1"/);
+  assert.match(text, / - chip ancestor chain \(2\):/);
+  assert.match(text, /<main> children: header,section,div/);
+  assert.match(text, / - text fields in the chip's region \(1\):/);
+  assert.match(text, /<div> contenteditable role=textbox "What do you want to create\?" visible 640x48 at \(24, 760\)/);
+  assert.match(text, / - controls in the chip's region \(1\):/);
+  assert.match(text, / — model\n/, 'the chip is listed with its purpose');
+  assert.match(text, / - generate-button candidates: "Generate"/);
+  assert.match(text, / - custom elements with shadow roots: flow-shell/);
+  assert.doesNotMatch(text, /my secret prompt/, 'the composer\u2019s own text never crosses into the report');
+});
+
+test('the report shows output counts in the detected line, the read attempt and the chip settings', () => {
+  const text = formatDiagnosticsReport({
+    ...REPORT,
+    detectedSettings: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9', outputs: 'x1' },
+    modelChip: 'Nano Banana 2.1',
+    settingsRead: {
+      attempted: true,
+      ok: true,
+      current: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9', outputs: 'x1' },
+      options: { mode: ['Image', 'Video'], model: ['Nano Banana 2.1', 'Veo 3.1'], aspectRatio: ['16:9', '9:16'], outputs: ['x1', 'x2', 'x3', 'x4'] },
+      strategy: 'settings-trigger-model-name; popover-options=12; model-menu-options=4',
+      chipModel: 'Nano Banana 2.1',
+      chipAspectRatio: '16:9',
+      chipOutputs: 'x1',
+      modelMatchesChip: true,
+      aspectMatchesChip: true,
+      outputsMatchesChip: true,
+      hasModelSubmenu: true,
+    },
+  });
+  assert.match(text, /Detected in Flow: mode=Image, model=Nano Banana 2\.1, aspectRatio=16:9, outputs=x1/);
+  assert.match(text, /Chip settings: 16:9 \u00b7 x1/);
+  assert.match(text, / - ok \(settings-trigger-model-name; popover-options=12; model-menu-options=4\): mode=Image, model=Nano Banana 2\.1, aspectRatio=16:9, outputs=x1/);
+  assert.match(text, / - outputs options: x1, x2, x3, x4/);
+  assert.match(text, / - chip shows: 16:9 \u00b7 x1/);
+  assert.match(text, / - the model list is nested behind "Select model family" \(it was opened and read\)/);
+});

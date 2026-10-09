@@ -357,7 +357,7 @@ export class Controller {
   }
 
   async setFlowSetting({ key, value }) {
-    if (!['mode', 'model', 'aspectRatio'].includes(key) || !value) {
+    if (!['mode', 'model', 'aspectRatio', 'outputs'].includes(key) || !value) {
       throw new AutomationError(ERROR_CODES.INVALID_INPUT, 'Choose a Flow setting and value.', { recoverable: false });
     }
     this.assertNotActive('Stop or pause the automation before changing Flow settings.');

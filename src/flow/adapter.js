@@ -12,6 +12,7 @@ import {
   countUnreachableFrames,
   findAgentToggle,
   findDetectedSettings,
+  inspectComposerArea,
   findGenerateButton,
   findPromptBoxWhenReady,
   findSettingsTrigger,
@@ -148,9 +149,13 @@ export function createFlowAdapter(options = {}) {
         promptControls: guarded('prompt controls', () => (prompt ? listPromptControls(doc, prompt.el) : []), []),
         detectedSettings: guarded(
           'detected settings',
-          () => (prompt ? findDetectedSettings(doc, prompt.el) : { mode: null, model: null, aspectRatio: null }),
-          { mode: null, model: null, aspectRatio: null },
+          () => (prompt ? findDetectedSettings(doc, prompt.el) : { mode: null, model: null, aspectRatio: null, outputs: null }),
+          { mode: null, model: null, aspectRatio: null, outputs: null },
         ),
+        // Read-only map of the composer area (chip, its ancestor chain, text fields,
+        // controls, generate candidates, shadow hosts) — the evidence for finding the
+        // prompt editor when the composer is NOT detected.
+        composerArea: guarded('composer area', () => inspectComposerArea(doc), null),
         agentOn: Boolean(agent?.on),
         agentFound: Boolean(agent),
         composerLayout: prompt ? (agent?.on ? 'agent' : 'standard') : null,
@@ -180,7 +185,12 @@ export function createFlowAdapter(options = {}) {
             options: result.options,
             strategy: result.strategy,
             chipModel: result.chipModel,
+            chipAspectRatio: result.chipAspectRatio,
+            chipOutputs: result.chipOutputs,
             modelMatchesChip: result.modelMatchesChip,
+            aspectMatchesChip: result.aspectMatchesChip,
+            outputsMatchesChip: result.outputsMatchesChip,
+            hasModelSubmenu: result.hasModelSubmenu,
           };
         } catch (error) {
           const payload = toErrorPayload(error);
@@ -328,7 +338,7 @@ function trimStack(error) {
 function settingsControlDetail(probe, settingsRead) {
   if (settingsRead.ok) {
     const current = settingsRead.current ?? {};
-    const bits = ['mode', 'model', 'aspectRatio'].map((key) => `${key}=${current[key] ?? 'unknown'}`).join(', ');
+    const bits = ['mode', 'model', 'aspectRatio', 'outputs'].map((key) => `${key}=${current[key] ?? 'unknown'}`).join(', ');
     const chip = settingsRead.chipModel
       ? ` The composer's chip shows "${settingsRead.chipModel}"${settingsRead.modelMatchesChip ? '' : ' — differs from the menu!'}.`
       : '';

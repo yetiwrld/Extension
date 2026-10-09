@@ -119,11 +119,12 @@ export function scriptedFlow(script = {}) {
     overlaps: 0,
     uploadFailuresLeft: script.uploadFailures ?? 0,
     submitFailuresLeft: script.submitFailures ?? 0,
-    settings: { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9' },
+    settings: { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9', ...script.settings },
     options: {
       mode: ['Image', 'Video'],
       model: ['Nano Banana Pro', 'Nano Banana'],
       aspectRatio: ['16:9', '9:16', '1:1'],
+      ...script.options,
     },
     promptText: '',
     pollCount: 0,

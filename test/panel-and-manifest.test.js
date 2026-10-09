@@ -126,13 +126,21 @@ test('the settings card distinguishes Not read yet, Unknown, Not offered and a r
 test('the settings card shows the model chip the composer actually displays', () => {
   const html = R.renderFlowSettings(
     {
-      connection: { status: 'connected', detectedSettings: { mode: null, model: 'Nano Banana 2.1', aspectRatio: null } },
+      connection: { status: 'connected', detectedSettings: { mode: null, model: 'Nano Banana 2.1', aspectRatio: '16:9', outputs: 'x1' } },
       automation: { phase: 'idle' },
-      flowSettings: { current: { mode: null, model: null, aspectRatio: null }, options: { mode: [], model: [], aspectRatio: [] }, readAt: null, readError: null },
+      flowSettings: {
+        current: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9', outputs: 'x1' },
+        options: { mode: ['Image', 'Video'], model: ['Nano Banana 2.1'], aspectRatio: ['16:9', '9:16'], outputs: ['x1', 'x2', 'x3', 'x4'] },
+        readAt: 1,
+        readError: null,
+      },
     },
     { busy: false },
   );
-  assert.match(html, /Flow's composer shows: model Nano Banana 2\.1/);
+  assert.match(html, /Flow's composer shows: model Nano Banana 2\.1 \u00b7 16:9 \u00b7 x1/);
+  assert.match(html, /data-setting="outputs"/);
+  assert.match(html, />x4</, 'the output counts Flow offers are selectable');
+  assert.match(html, /data-setting="outputs"[^>]*><option value="x1" selected/);
   const without = R.renderFlowSettings(
     {
       connection: { status: 'connected' },

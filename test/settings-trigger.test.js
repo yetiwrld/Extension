@@ -173,6 +173,7 @@ test('findDetectedSettings reads mode, model and aspect ratio from the controls 
     mode: 'Video',
     model: 'Veo 3.1',
     aspectRatio: '9:16',
+    outputs: null,
   });
 });
 
@@ -182,7 +183,7 @@ test('findDetectedSettings reports null for what the controls do not show', () =
       <textarea id="prompt" placeholder="Describe your image or video"></textarea>
       <button aria-label="Generate">Generate</button>
     </div>`);
-  assert.deepEqual(findDetectedSettings(window.document, promptOf(window)), { mode: null, model: null, aspectRatio: null });
+  assert.deepEqual(findDetectedSettings(window.document, promptOf(window)), { mode: null, model: null, aspectRatio: null, outputs: null });
 });
 
 test('findSettingsTriggerWhenReady finds a control that appears after the first look', async () => {
@@ -214,7 +215,7 @@ test('probe lists the controls near the prompt and the settings they show', asyn
   );
   assert.equal(probe.promptControls[1].role, 'switch');
   assert.equal(probe.promptControls[1].purpose, 'agent');
-  assert.deepEqual(probe.detectedSettings, { mode: null, model: null, aspectRatio: null });
+  assert.deepEqual(probe.detectedSettings, { mode: null, model: null, aspectRatio: null, outputs: null });
 });
 
 test('the "Check Flow page" report names the controls near the prompt when the trigger is missing', async () => {
@@ -248,7 +249,7 @@ test('probe reports the controls and detected settings when the trigger is found
     probe.promptControls.some((control) => control.name === 'Nano Banana Pro \u25be' && control.purpose === 'model'),
     'the controls list names the model control',
   );
-  assert.deepEqual(probe.detectedSettings, { mode: null, model: 'Nano Banana Pro', aspectRatio: null });
+  assert.deepEqual(probe.detectedSettings, { mode: null, model: 'Nano Banana Pro', aspectRatio: null, outputs: null });
 });
 
 test('probe waits for a composer that renders late instead of failing at once', async () => {

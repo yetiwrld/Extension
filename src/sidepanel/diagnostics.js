@@ -56,10 +56,14 @@ export function formatDiagnosticsReport(d) {
     detected.mode ? `mode=${detected.mode}` : null,
     detected.model ? `model=${detected.model}` : null,
     detected.aspectRatio ? `aspectRatio=${detected.aspectRatio}` : null,
+    detected.outputs ? `outputs=${detected.outputs}` : null,
   ].filter(Boolean);
   lines.push(`Detected in Flow: ${detectedParts.length ? detectedParts.join(', ') : 'not identifiable without opening the settings menu'}`);
   const chipModel = d.modelChip ?? detected.model ?? null;
   lines.push(`Model chip in the composer: ${chipModel ? `"${chipModel}"` : 'not identified'}`);
+  if (detected.aspectRatio || detected.outputs) {
+    lines.push(`Chip settings: ${[detected.aspectRatio, detected.outputs].filter(Boolean).join(' \u00b7 ')}`);
+  }
 
   // The settings-read attempt: which control was clicked, whether a menu opened,
   // and which options it offered. This is the evidence for "did not open" and for
@@ -69,17 +73,68 @@ export function formatDiagnosticsReport(d) {
     lines.push('', 'Settings read attempt:');
     if (read.ok) {
       const current = read.current ?? {};
-      const bits = ['mode', 'model', 'aspectRatio'].map((key) => `${key}=${current[key] ?? 'unknown'}`);
+      const bits = ['mode', 'model', 'aspectRatio', 'outputs'].map((key) => `${key}=${current[key] ?? 'unknown'}`);
       lines.push(` - ok (${read.strategy ?? 'unknown strategy'}): ${bits.join(', ')}`);
-      for (const key of ['mode', 'model', 'aspectRatio']) {
+      for (const key of ['mode', 'model', 'aspectRatio', 'outputs']) {
         const options = Array.isArray(read.options?.[key]) ? read.options[key] : [];
         if (options.length) lines.push(` - ${key} options: ${options.join(', ')}`);
       }
       if (read.chipModel) {
         lines.push(` - composer chip shows "${read.chipModel}"${read.modelMatchesChip === false ? ' — DIFFERS from the menu' : ''}`);
       }
+      const chipBits = [read.chipAspectRatio, read.chipOutputs].filter(Boolean);
+      if (chipBits.length) lines.push(` - chip shows: ${chipBits.join(' \u00b7 ')}${read.aspectMatchesChip === false || read.outputsMatchesChip === false ? ' — DIFFERS from the menu' : ''}`);
+      if (read.hasModelSubmenu) lines.push(' - the model list is nested behind "Select model family" (it was opened and read)');
     } else {
       lines.push(` - FAILED (${read.code ?? 'unknown code'}): ${read.error ?? 'unknown error'}`);
+    }
+  }
+
+  // The composer area: the model chip, its ancestor chain, every text field in its
+  // region, the controls there, generate-button candidates and shadow-DOM hosts.
+  // This is what identifies the prompt editor when the composer is NOT detected.
+  // No element text crosses into the report: a composer's text is the user's prompt.
+  const area = d.composerArea;
+  if (area) {
+    lines.push('', 'Composer area (read-only DOM map):');
+    if (area.chip) {
+      lines.push(` - model chip: <${area.chip.tag}${area.chip.role ? ` role=${area.chip.role}` : ''}> "${area.chip.name}"`);
+    } else {
+      lines.push(' - model chip: not identified');
+    }
+    if (area.chipChain?.length) {
+      lines.push(` - chip ancestor chain (${area.chipChain.length}):`);
+      for (const step of area.chipChain) {
+        lines.push(`   <${step.tag}${step.role ? ` role=${step.role}` : ''}${step.label ? ` "${step.label}"` : ''}> children: ${step.childTags || '(none)'}`);
+      }
+    }
+    if (area.regionFields?.length) {
+      lines.push(` - text fields in the chip's region (${area.regionFields.length}):`);
+      for (const field of area.regionFields) {
+        const bits = [field.kind];
+        if (field.role) bits.push(`role=${field.role}`);
+        if (field.name) bits.push(`"${field.name}"`);
+        bits.push(field.visible ? 'visible' : 'hidden');
+        if (field.readonly) bits.push('read-only');
+        if (field.disabled) bits.push('disabled');
+        if (field.rect) bits.push(`${field.rect.width}x${field.rect.height} at (${field.rect.x}, ${field.rect.y})`);
+        lines.push(`   <${field.tag}> ${bits.join(' ')}`);
+      }
+    } else {
+      lines.push(' - text fields in the chip\u2019s region: none');
+    }
+    if (area.regionControls?.length) {
+      lines.push(` - controls in the chip's region (${area.regionControls.length}):`);
+      for (const control of area.regionControls) {
+        lines.push(`   <${control.tag}${control.role ? ` role=${control.role}` : ''}> "${control.name}"${control.purpose && control.purpose !== 'other' ? ` — ${control.purpose}` : ''}`);
+      }
+    }
+    if (area.generateCandidates?.length) {
+      const labelled = area.generateCandidates.filter((candidate) => candidate.labelled);
+      lines.push(` - generate-button candidates: ${labelled.length ? labelled.map((candidate) => `"${candidate.name}"`).join(', ') : 'none labelled'}`);
+    }
+    if (area.shadowHosts?.length) {
+      lines.push(` - custom elements with shadow roots: ${area.shadowHosts.map((host) => host.tag).join(', ')}`);
     }
   }
 
