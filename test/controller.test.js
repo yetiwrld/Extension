@@ -237,6 +237,46 @@ test('the first time a Flow project is seen, its settings are read for the panel
   assert.ok(flow.state.calls.includes('readSettings'));
 });
 
+test('a failed automatic settings read is logged and reported, never a crash in the worker', async () => {
+  const { controller, store } = await createController();
+  // Flow exposes no settings control (the first thing that can differ on the live page):
+  // the automatic settings read fails while the user is already acting.
+  const failure = Object.assign(new Error('Could not find the model/settings control next to the Flow prompt box.'), {
+    code: 'FLOW_UI_CHANGED',
+  });
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  controller.bridge.readSettings = async () => {
+    await gate;
+    throw failure;
+  };
+
+  await controller.handle('checkFlow'); // connected + prompt found: starts the automatic read
+  const pending = controller.settingsReadPromise;
+  assert.ok(pending, 'the automatic settings read is in flight');
+
+  // A command that waits for the background read (Start, Resume, Read from Flow, a setting change)
+  // must surface Flow's own error, not a crash inside the failure handler.
+  const userAction = controller.handle('refreshFlowSettings');
+  release();
+  await assert.rejects(userAction, (error) => {
+    assert.equal(error.code, 'FLOW_UI_CHANGED');
+    assert.match(error.message, /model\/settings control/);
+    return true;
+  });
+
+  // The background read resolves: the failure was handled and logged, not rethrown into the worker.
+  await pending;
+  const logs = store.read(STORAGE_KEYS.logs).map((entry) => entry.message);
+  assert.ok(
+    logs.some((message) => /Flow settings are not read yet: Could not find the model\/settings control/.test(message)),
+    JSON.stringify(logs),
+  );
+  assert.equal(store.read(STORAGE_KEYS.flowSettings).readAt, null, 'no settings were stored');
+});
+
 test('Read from Flow is refused while the automation runs, so Flow menus are never driven by two callers', async () => {
   const { controller } = await createController({ flowScript: { neverFinish: true } });
   await controller.handle('analyze', { text: readExampleDocument() });

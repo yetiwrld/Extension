@@ -4,7 +4,7 @@ import { listLibrary } from '../references/library.js';
 import { buildSceneQueue, countByStatus, updateReferenceSummaries } from '../queue/scene-model.js';
 import { computeReadiness } from '../queue/readiness.js';
 import { SESSION_PHASE, isActivePhase } from '../queue/states.js';
-import { AutomationError, ERROR_CODES } from '../utils/errors.js';
+import { AutomationError, ERROR_CODES, toErrorPayload } from '../utils/errors.js';
 import { defaultValue, DEFAULT_PREFS, LOG_LIMIT, mergePrefs, STORAGE_KEYS } from '../storage/schema.js';
 import { uid } from '../utils/ids.js';
 import { checkFlowConnection } from './connection.js';
