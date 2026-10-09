@@ -1475,6 +1475,32 @@ function countDescendants(el, cap = 500) {
  * listbox beats a bare wrapper), then a menu recognised by its content. Portals and
  * overlay containers anywhere in the document (and inside shadow roots) are searched.
  */
+/**
+ * Overlay backdrops that are still on the page.
+ *
+ * Angular CDK (which Flow's composer menu uses — `div.cdk-overlay-popover` was
+ * measured on the live page) lays a full-page backdrop over everything while a menu
+ * is open, and closes the menu when that backdrop is pressed. If one is left behind,
+ * the next press on the trigger both closes the old overlay and opens the new one,
+ * so the net DOM change is nothing and the menu never appears — exactly the
+ * "the click changed nothing visible in the DOM" failure. They are detected so they
+ * can be waited out, never removed: the extension does not mutate Flow's DOM.
+ */
+export function findOverlayBackdrops(doc) {
+  const found = [];
+  for (const scope of collectMenuScopes(doc)) {
+    for (const el of scope.querySelectorAll('.cdk-overlay-backdrop, [class*="overlay-backdrop"]')) {
+      if (isVisible(el) && !found.includes(el)) found.push(el);
+    }
+  }
+  return found;
+}
+
+/** True when the control reports an open menu through ARIA. */
+export function isExpanded(el) {
+  return el?.getAttribute?.('aria-expanded') === 'true';
+}
+
 export function findSettingsMenu(doc, { exclude = null, chipModel = null } = {}) {
   const all = collectOpenMenus(doc, { exclude });
   const menus = all.filter((item) => item.isMenu);

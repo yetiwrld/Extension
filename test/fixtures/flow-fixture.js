@@ -41,6 +41,11 @@
  *                    composer with its own prompt, a visible model chip that opens
  *                    NOTHING, and button.agent-mode-chip[aria-pressed="true"].
  *                    Clicking the chip leaves Agent mode: the classic composer and
+ *   cdkBackdrop      the Angular CDK shape: closing the menu leaves a full-page
+ *                    .cdk-overlay-backdrop behind, and the next press on the
+ *                    trigger is consumed dismissing it instead of opening the menu
+ *                    (the measured "the click changed nothing" failure). Escape or
+ *                    an outside press clears it.
  *                    its settings trigger return. agentOnly renders the same migrated
  *                    composer with NO agent-mode chip at all (state B: agent-only).
  *                    agentChipStuck makes the click a
@@ -86,6 +91,7 @@ export function installFlowFixture(
     decoratedModelRows = false,
     triggerNamedSettings = false,
     modeIconRow = false,
+    cdkBackdrop = false,
   } = {},
 ) {
   const doc = window.document;
@@ -291,8 +297,22 @@ export function installFlowFixture(
   }
 
   // The Upload control exists only while the Add menu is open, like a real menu.
+  /** @returns {boolean} true when a backdrop was present and this press consumed it. */
+  function dismissBackdrop() {
+    const backdrop = doc.querySelector('.cdk-overlay-backdrop');
+    if (!backdrop) return false;
+    backdrop.remove();
+    return true;
+  }
+
   function closePopover() {
+    const hadMenu = Boolean(overlay.innerHTML);
     overlay.innerHTML = '';
+    if (cdkBackdrop && hadMenu && !doc.querySelector('.cdk-overlay-backdrop')) {
+      const backdrop = doc.createElement('div');
+      backdrop.className = 'cdk-overlay-backdrop';
+      doc.body.appendChild(backdrop);
+    }
     settingsBtn.setAttribute('aria-expanded', 'false');
     if (addBtn) addBtn.setAttribute('aria-expanded', 'false');
   }
@@ -443,11 +463,17 @@ export function installFlowFixture(
   }
 
   doc.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closePopover();
+    if (event.key === 'Escape') {
+      if (cdkBackdrop && dismissBackdrop()) return;
+      closePopover();
+    }
   });
 
   settingsBtn.addEventListener('click', () => {
     if (chipDead) return; // the control opens nothing
+    // A leftover CDK backdrop consumes the press: the overlay is dismissed and the
+    // menu does NOT open. This is what made a mid-run click look like a dead control.
+    if (cdkBackdrop && dismissBackdrop()) return;
     if (liveMenu) {
       if (settingsBtn.getAttribute('aria-expanded') === 'true') closePopover();
       else openLiveSettings();

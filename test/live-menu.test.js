@@ -369,3 +369,30 @@ test('an icon ligature beside a mode row does not become a second option', async
   assert.deepEqual(read.options.mode, ['Image', 'Video']);
   assert.equal(read.current.mode, 'Image');
 });
+
+test('a leftover overlay backdrop no longer makes the trigger look dead mid-run', async () => {
+  // Measured failure: the diagnostic opens the menu on a fresh page, but a scene run
+  // (which has already opened and closed the menu once) reported "the click changed
+  // nothing visible in the DOM". Angular CDK leaves a full-page backdrop behind, and
+  // the next press is consumed dismissing it.
+  const { adapter, page } = fixturePage({ liveMenu: true, cdkBackdrop: true });
+  const first = await adapter.readSettings();
+  assert.equal(first.current.aspectRatio, '16:9');
+  // A backdrop is now on the page, exactly as Flow leaves one.
+  assert.ok(page.doc.querySelector('.cdk-overlay-backdrop'), 'the fixture left a backdrop behind');
+  const applied = await adapter.applySettings({ aspectRatio: '9:16' });
+  assert.equal(page.state.aspectRatio, '9:16', 'Flow really changed');
+  assert.equal(applied.current.aspectRatio, '9:16');
+});
+
+test('a settings menu that cannot be opened reports the backdrop and aria-expanded evidence', async () => {
+  const { adapter } = fixturePage({ liveMenu: true, chipDead: true });
+  await assert.rejects(
+    () => adapter.readSettings(),
+    (error) => {
+      assert.match(error.message, /did not open/);
+      assert.match(error.message, /press(es)?\)/, 'the number of presses is reported');
+      return true;
+    },
+  );
+});

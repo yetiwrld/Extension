@@ -11,9 +11,11 @@ import {
   findModelChipText,
   findOpenPopover,
   findPromptBox,
+  findOverlayBackdrops,
   findSettingsMenu,
   findSettingsTrigger,
   findSettingsTriggerWhenReady,
+  isExpanded,
   isModelSubmenuTrigger,
   isSelected,
   listPromptControls,
@@ -476,10 +478,16 @@ async function openSettingsPopover(ctx, trigger, promptEl, chip = null) {
   }
   const control = trigger?.el ?? trigger;
   const label = trigger?.label ?? accessibleName(control).slice(0, 40) ?? '(no accessible name)';
+  // A leftover CDK backdrop makes the NEXT press close the old overlay instead of
+  // opening the menu (the press is consumed), which looks like a dead control. Wait
+  // for the page to settle first; nothing is removed from Flow's DOM.
+  const settled = await settleOverlays(ctx);
   const before = snapshotMenuish(ctx.doc, { chipModel });
   const wasConnected = control.isConnected;
+  const expandedBefore = isExpanded(control);
   let popover = await clickAndWait(ctx, control, promptEl, chipModel);
   let retried = false;
+  let reclicked = false;
   if (!popover) {
     // One bounded retry with a FRESH trigger: Flow replaces composer elements on
     // rerender, and a click on a detached node opens nothing.
@@ -490,6 +498,17 @@ async function openSettingsPopover(ctx, trigger, promptEl, chip = null) {
       popover = await clickAndWait(ctx, freshControl, promptEl, chipModel);
     }
   }
+  if (!popover) {
+    // The press was swallowed (a backdrop was dismissed by it, or the menu toggled
+    // shut and open within one frame): let the overlays settle and press ONCE more.
+    // Bounded at a single extra press, and only while no menu is open.
+    await settleOverlays(ctx);
+    const again = findSettingsTrigger(ctx.doc, promptEl)?.el ?? (control.isConnected ? control : null);
+    if (again && !findSettingsMenu(ctx.doc, { exclude: promptEl, chipModel })) {
+      reclicked = true;
+      popover = await clickAndWait(ctx, again, promptEl, chipModel);
+    }
+  }
   const after = snapshotMenuish(ctx.doc, { chipModel });
   const diff = diffSignatures(before, after);
   const click = {
@@ -497,6 +516,11 @@ async function openSettingsPopover(ctx, trigger, promptEl, chip = null) {
     label: String(label).slice(0, 60),
     clicked: wasConnected,
     retried,
+    reclicked,
+    expandedBefore,
+    expandedAfter: isExpanded(findSettingsTrigger(ctx.doc, promptEl)?.el ?? control),
+    backdropsBefore: settled.backdropsBefore,
+    backdropsCleared: settled.cleared,
     domAdded: diff.added.slice(0, 12),
     domRemoved: diff.removed.slice(0, 12),
   };
@@ -504,13 +528,43 @@ async function openSettingsPopover(ctx, trigger, promptEl, chip = null) {
     // Say WHICH control was clicked, and WHAT the click changed: "did not open" is
     // only actionable with that evidence.
     const changed = diff.added.length ? ` The click added to the DOM: ${diff.added.slice(0, 8).join('; ')}.` : ' The click changed nothing visible in the DOM.';
+    const overlayNote = settled.backdropsBefore
+      ? ` ${settled.backdropsBefore} overlay backdrop(s) were on the page before the click and ${settled.cleared ? 'were dismissed first' : 'did NOT go away'}.`
+      : '';
+    const ariaNote = click.expandedAfter ? ' The control now reports aria-expanded="true", so Flow thinks a menu is open but none could be found.' : '';
     throw new AutomationError(
       ERROR_CODES.FLOW_UI_CHANGED,
-      `The Flow settings menu did not open after clicking "${label}". No menu appeared within ${Math.round(ctx.timings.popoverMs / 1000)}s.${changed} ` +
-        'The control may not open the settings menu in this Flow layout. Run "Check Flow page" in Settings for the full report.',
+      `The Flow settings menu did not open after clicking "${label}" (${reclicked ? '2 presses' : '1 press'}). No menu appeared within ${Math.round(ctx.timings.popoverMs / 1000)}s.${changed}${overlayNote}${ariaNote} ` +
+        'Run "Check Flow page" in Settings for the full report.',
     );
   }
   return { popover, click };
+}
+
+/**
+ * Wait for leftover overlay backdrops to go away before pressing the trigger.
+ * Escape, then an outside press — the two gestures a user would make. Nothing is
+ * removed from the page; if the backdrops stay, the fact is reported, not hidden.
+ * @returns {Promise<{backdropsBefore: number, cleared: boolean}>}
+ */
+async function settleOverlays(ctx) {
+  const backdropsBefore = findOverlayBackdrops(ctx.doc).length;
+  if (!backdropsBefore) return { backdropsBefore: 0, cleared: true };
+  pressEscape(ctx.doc);
+  let gone = await waitForValue(() => (findOverlayBackdrops(ctx.doc).length ? null : true), {
+    timeoutMs: ctx.timings.popoverMs,
+    intervalMs: 60,
+    sleep: ctx.sleep,
+  });
+  if (!gone) {
+    clickOutside(ctx.doc);
+    gone = await waitForValue(() => (findOverlayBackdrops(ctx.doc).length ? null : true), {
+      timeoutMs: ctx.timings.popoverMs,
+      intervalMs: 60,
+      sleep: ctx.sleep,
+    });
+  }
+  return { backdropsBefore, cleared: Boolean(gone) };
 }
 
 /** Click the control and wait for a menu to appear anywhere in the document. */
@@ -537,6 +591,13 @@ async function closePopover(ctx, popover) {
 
 async function waitForClosed(ctx, popover) {
   await waitForValue(() => !popover.isConnected || findOpenPopover(ctx.doc) !== popover, {
+    timeoutMs: ctx.timings.popoverMs,
+    intervalMs: 60,
+    sleep: ctx.sleep,
+  });
+  // The menu can be gone while its backdrop is still fading out, and that backdrop
+  // swallows the next press. Wait for it too (bounded), then carry on either way.
+  await waitForValue(() => (findOverlayBackdrops(ctx.doc).length ? null : true), {
     timeoutMs: ctx.timings.popoverMs,
     intervalMs: 60,
     sleep: ctx.sleep,

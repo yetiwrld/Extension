@@ -157,6 +157,15 @@ export function formatDiagnosticsReport(d) {
   if (click) {
     lines.push('', 'Settings-menu click evidence:');
     lines.push(` - clicked: ${click.control} "${click.label}"${click.retried ? ' (retried once with a fresh element)' : ''}`);
+    lines.push(
+      ` - presses: ${click.reclicked ? 2 : 1}${click.retried ? ' (one with a fresh element)' : ''}` +
+        ` · aria-expanded before: ${click.expandedBefore ?? 'unknown'}, after: ${click.expandedAfter ?? 'unknown'}`,
+    );
+    if (click.backdropsBefore !== undefined) {
+      lines.push(
+        ` - overlay backdrops before the press: ${click.backdropsBefore}${click.backdropsBefore ? (click.backdropsCleared ? ' (dismissed first)' : ' (still there \u2014 they consume the press)') : ''}`,
+      );
+    }
     lines.push(` - DOM added after the click: ${click.domAdded.length ? click.domAdded.join('; ') : 'nothing'}`);
     lines.push(` - DOM removed after the click: ${click.domRemoved.length ? click.domRemoved.join('; ') : 'nothing'}`);
   }
