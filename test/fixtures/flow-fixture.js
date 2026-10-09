@@ -41,6 +41,10 @@
  *                    composer with its own prompt, a visible model chip that opens
  *                    NOTHING, and button.agent-mode-chip[aria-pressed="true"].
  *                    Clicking the chip leaves Agent mode: the classic composer and
+ *   uploadInShadow   the live upload shape: opening the Add menu mounts the file
+ *                    input inside a custom element's SHADOW root, and the "Upload"
+ *                    item only opens the OS dialog (which an extension cannot fill),
+ *                    so the input must be found and filled without clicking it.
  *   cdkBackdrop      the Angular CDK shape: closing the menu leaves a full-page
  *                    .cdk-overlay-backdrop behind, and the next press on the
  *                    trigger is consumed dismissing it instead of opening the menu
@@ -92,6 +96,7 @@ export function installFlowFixture(
     triggerNamedSettings = false,
     modeIconRow = false,
     cdkBackdrop = false,
+    uploadInShadow = false,
   } = {},
 ) {
   const doc = window.document;
@@ -518,29 +523,39 @@ export function installFlowFixture(
           <button type="button" role="menuitem">Use from project</button>
         </div>`;
       addBtn.setAttribute('aria-expanded', 'true');
+      const mountFileInput = (parent) => {
+        const input = doc.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.multiple = true;
+        input.hidden = true;
+        // jsdom does not model the files setter for arbitrary objects; keep the value the adapter sets.
+        let files = null;
+        Object.defineProperty(input, 'files', {
+          configurable: true,
+          get: () => files,
+          set: (value) => {
+            files = value;
+          },
+        });
+        input.addEventListener('change', () => {
+          for (const file of Array.from(input.files ?? [])) {
+            addChip(file.name);
+          }
+        });
+        parent.appendChild(input);
+        return input;
+      };
+      if (uploadInShadow && !doc.querySelector('flow-upload-host')) {
+        // Flow mounts the input WITH the menu, inside a shadow root.
+        const host = doc.createElement('flow-upload-host');
+        doc.body.appendChild(host);
+        mountFileInput(host.attachShadow({ mode: 'open' }));
+      }
       overlay.querySelector('#upload-item').addEventListener('click', () => {
-        if (!doc.querySelector('input[type="file"]')) {
-          const input = doc.createElement('input');
-          input.type = 'file';
-          input.accept = 'image/*';
-          input.multiple = true;
-          input.hidden = true;
-          // jsdom does not model the files setter for arbitrary objects; keep the value the adapter sets.
-          let files = null;
-          Object.defineProperty(input, 'files', {
-            configurable: true,
-            get: () => files,
-            set: (value) => {
-              files = value;
-            },
-          });
-          input.addEventListener('change', () => {
-            for (const file of Array.from(input.files ?? [])) {
-              addChip(file.name);
-            }
-          });
-          $('#prompt-box').appendChild(input);
-        }
+        // The live item opens the OS file dialog: nothing changes in the page.
+        if (uploadInShadow) return;
+        if (!doc.querySelector('input[type="file"]')) mountFileInput($('#prompt-box'));
         closePopover();
       });
     });

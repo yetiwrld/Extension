@@ -18,6 +18,7 @@ import {
   findDetectedSettings,
   findProgressIndicators,
   inspectComposerArea,
+  inspectFileInputs,
   inspectSettingsTrigger,
   findGenerateButton,
   findPromptBoxWhenReady,
@@ -188,6 +189,10 @@ export function createFlowAdapter(options = {}) {
         // classified from measured facts so the next action is evidence-led.
         composerState: guarded('composer state', () => classifyComposerState(doc), null),
         composerLayout: prompt ? (agent?.on ? 'agent' : 'standard') : null,
+        // The upload surface: how many file inputs the page exposes and where.
+        // Flow's "Upload" item opens the OS dialog, which no extension can fill, so
+        // this is what decides whether references can be attached at all.
+        fileInputs: guarded('file inputs', () => inspectFileInputs(doc), []),
         referencesAttached: guarded('references', () => (prompt ? countAttachedReferences(doc, prompt.el) : 0), 0),
         outputsVisible: guarded('outputs', () => takeOutputSnapshot(doc).outputKeys.length, 0),
         issues,

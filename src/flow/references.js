@@ -8,6 +8,7 @@ import {
   findPromptRegion,
   findReferenceRemoveButtons,
   findUploadMenuItem,
+  inspectFileInputs,
   requirePromptBox,
 } from './selectors.js';
 
@@ -61,7 +62,12 @@ export async function attachReferences(ctx, payloads) {
   if (!payloads.length) return { attached: 0, expected: 0 };
   const prompt = requirePromptBox(ctx.doc);
 
-  let input = findFileInput(ctx.doc);
+  // 1) The page's own file input, searched across shadow scopes and frames. Flow's
+  //    "Upload" item exists to open the OS file dialog, which an extension cannot
+  //    fill, so the input is filled directly whenever one can be found.
+  let input = findFileInput(ctx.doc, { promptEl: prompt.el });
+  let openedMenu = false;
+  let clickedUpload = false;
   if (!input) {
     const add = findAddButton(prompt.el);
     if (!add) {
@@ -70,16 +76,43 @@ export async function attachReferences(ctx, payloads) {
         'Could not find the "Add" control for uploads next to the prompt box.',
       );
     }
+    // 2) Opening the Add menu is usually enough: Flow mounts the input with it.
     clickElement(add.el);
-    await ctx.sleep(ctx.timings.settleMs);
-    const item = findUploadMenuItem(ctx.doc);
-    if (item) {
-      clickElement(item.el);
+    openedMenu = true;
+    input = await waitForValue(() => findFileInput(ctx.doc, { promptEl: prompt.el }), {
+      timeoutMs: ctx.timings.popoverMs,
+      intervalMs: 80,
+      sleep: ctx.sleep,
+    });
+    if (!input) {
+      // 3) Last resort: choose Upload. This may open the OS dialog, which cannot be
+      //    filled from here — so it is only tried when nothing else produced an input.
+      const item = findUploadMenuItem(ctx.doc);
+      if (item) {
+        clickElement(item.el);
+        clickedUpload = true;
+      }
+      input = await waitForValue(() => findFileInput(ctx.doc, { promptEl: prompt.el }), {
+        timeoutMs: ctx.timings.popoverMs * 4,
+        intervalMs: 100,
+        sleep: ctx.sleep,
+      });
     }
-    input = await waitForValue(() => findFileInput(ctx.doc), { timeoutMs: ctx.timings.popoverMs * 10, intervalMs: 100, sleep: ctx.sleep });
     if (findOpenPopover(ctx.doc)) pressEscape(ctx.doc);
     if (!input) {
-      throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, 'Flow did not open a file picker after choosing Upload.');
+      const seen = inspectFileInputs(ctx.doc);
+      const detail = seen.length
+        ? ` The page has ${seen.length} file input(s), none usable: ${seen
+            .map((item) => `${item.scope}${item.disabled ? ', disabled' : ''}${item.accept ? `, accepts ${item.accept}` : ''}`)
+            .join('; ')}.`
+        : ' No file input exists anywhere in the page, its shadow roots or its frames.';
+      throw new AutomationError(
+        ERROR_CODES.REFERENCE_UPLOAD_FAILED,
+        `Flow did not expose a file input for the upload (Add control: found; menu opened: ${openedMenu ? 'yes' : 'no'}; ` +
+          `"Upload" chosen: ${clickedUpload ? 'yes' : 'no'}).${detail} ` +
+          'If Flow opened its own file dialog, close it and attach this reference in Flow by hand, then retry the scene. ' +
+          'Run "Check Flow page" in Settings for the upload inspection.',
+      );
     }
   }
 

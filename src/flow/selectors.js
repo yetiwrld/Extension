@@ -1808,12 +1808,63 @@ export function findUploadMenuItem(doc) {
   return item ? { el: item, strategy: 'upload-menu-item' } : null;
 }
 
-/** Hidden or visible file input used for uploads. */
-export function findFileInput(doc, { includeHidden = true } = {}) {
-  const inputs = Array.from(doc.querySelectorAll('input[type="file"]'));
-  const accepting = inputs.filter((input) => !input.disabled);
-  if (!accepting.length) return null;
-  return includeHidden ? accepting[accepting.length - 1] : accepting.find(isVisible) ?? null;
+/**
+ * The file input Flow uploads through.
+ *
+ * Flow never needs its "Upload" item clicked: that item exists to open the OS file
+ * dialog, which no extension can fill. The page's own `input[type="file"]` can be
+ * filled directly — but on the live page it lives inside the composer's custom
+ * elements (and can sit in a CDK overlay), so a top-level `querySelectorAll` misses
+ * it. Every shadow scope and every reachable frame is searched, and the candidates
+ * are ranked: accepts images first, then one inside the composer, then the last one
+ * added (Flow mounts a fresh input per menu).
+ */
+export function findFileInput(doc, { includeHidden = true, promptEl = null } = {}) {
+  const found = collectFileInputs(doc);
+  const usable = found.filter((item) => !item.el.disabled && (includeHidden || isVisible(item.el)));
+  if (!usable.length) return null;
+  const region = promptEl ? findPromptRegion(promptEl) : null;
+  const score = (item) => {
+    let value = 0;
+    if (/image|video|\*\/\*/i.test(item.el.getAttribute('accept') ?? '')) value += 2;
+    if (region && region.contains(item.el)) value += 1;
+    return value;
+  };
+  return usable.reduce((best, item) => (score(item) >= score(best) ? item : best), usable[0]).el;
+}
+
+/** Every file input reachable from this document: light DOM, shadow scopes, frames. */
+function collectFileInputs(doc) {
+  const found = [];
+  const add = (el, scope) => {
+    if (!found.some((item) => item.el === el)) found.push({ el, scope });
+  };
+  for (const scope of collectMenuScopes(doc)) {
+    for (const el of scope.querySelectorAll('input[type="file"]')) add(el, scope === doc ? 'document' : 'shadow root');
+  }
+  for (const frameDoc of collectFrameDocs(doc)) {
+    for (const scope of collectMenuScopes(frameDoc)) {
+      for (const el of scope.querySelectorAll('input[type="file"]')) add(el, 'frame');
+    }
+  }
+  return found;
+}
+
+/**
+ * Read-only inspection of the upload surface, for the diagnostic report: how many
+ * file inputs exist, where, and what each accepts. No file names, no page text.
+ */
+export function inspectFileInputs(doc) {
+  return collectFileInputs(doc)
+    .slice(0, 8)
+    .map((item) => ({
+      scope: item.scope,
+      accept: (item.el.getAttribute('accept') ?? '').slice(0, 60),
+      multiple: Boolean(item.el.multiple),
+      disabled: Boolean(item.el.disabled),
+      visible: isVisible(item.el),
+      inComposer: Boolean(item.el.closest?.('flow-prompt-box, flow-base-prompt-box')),
+    }));
 }
 
 /** Tiles that look like generated outputs: large images/videos outside the prompt region and popovers. */

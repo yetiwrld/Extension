@@ -93,6 +93,19 @@ export function formatDiagnosticsReport(d) {
   // Agent mode: the verified chip (button.agent-mode-chip + aria-pressed), the
   // composer custom elements (existence AND visibility), and the classic settings
   // trigger's hidden state — the facts that explain a settings click going nowhere.
+  const inputs = Array.isArray(d.fileInputs) ? d.fileInputs : null;
+  if (inputs) {
+    lines.push('', `Reference upload: ${inputs.length} file input(s) reachable`);
+    if (!inputs.length) {
+      lines.push(' - none right now; Flow usually mounts one when the Add menu opens (the extension opens it, it never uses Flow\'s OS file dialog)');
+    }
+    for (const item of inputs) {
+      lines.push(
+        ` - ${item.scope}${item.inComposer ? ', in the composer' : ''}: accepts ${item.accept || 'anything'}, ${item.multiple ? 'multiple' : 'single'}, ${item.disabled ? 'disabled' : 'enabled'}, ${item.visible ? 'visible' : 'hidden'}`,
+      );
+    }
+  }
+
   const composerState = d.composerState;
   if (composerState) {
     lines.push('', `Composer state: ${composerState.state} — ${composerState.label}`);
