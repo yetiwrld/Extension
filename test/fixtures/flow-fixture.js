@@ -48,6 +48,15 @@
  *   uploadByDrop     the measured live shape: NO file input exists at any point and
  *                    the Add menu offers no usable upload item; the composer accepts
  *                    dropped files instead (event.dataTransfer.files).
+ *   snackbar         Flow's undo snackbar is already on screen ("6 items moved to
+ *                    bin / Undo / View in bin / Dismiss"), as it was live when the
+ *                    settings read misread it as the menu that opened
+ *   libraryRail      the media library filter rail (All media, Images, ...) is
+ *                    already open on the page before any click
+ *   libraryTrigger   the measured live page: a control named "Settings trigger" sits
+ *                    in the composer and opens Flow's MEDIA LIBRARY filter menu
+ *                    (All media, Images, Characters, Scenes, Uploads, Tools) while
+ *                    the model chip opens the real generation settings
  *   modeIconOnly     the measured live menu once ingredients are attached: NO Mode
  *                    rows at all, only a <mat-icon> whose ligature text reads
  *                    "image" (it must never be read, or clicked, as a Mode option).
@@ -105,6 +114,9 @@ export function installFlowFixture(
     uploadInShadow = false,
     uploadByDrop = false,
     modeIconOnly = false,
+    libraryTrigger = false,
+    snackbar = false,
+    libraryRail = false,
   } = {},
 ) {
   const doc = window.document;
@@ -505,6 +517,51 @@ export function installFlowFixture(
     if (settingsBtn.getAttribute('aria-expanded') === 'true') closePopover();
     else openSettings();
   });
+
+  if (snackbar) {
+    const bar = doc.createElement('div');
+    bar.setAttribute('role', 'status');
+    bar.setAttribute('aria-live', 'polite');
+    bar.className = 'mat-mdc-snack-bar-container';
+    bar.innerHTML =
+      '<span>6 items moved to bin</span><button type="button">Undo</button>' +
+      '<button type="button">View in bin</button><button type="button">Dismiss</button>';
+    doc.body.appendChild(bar);
+  }
+
+  if (libraryRail) {
+    const rail = doc.createElement('div');
+    rail.setAttribute('role', 'menu');
+    rail.setAttribute('aria-label', 'Library');
+    rail.innerHTML = ['All media', 'Images', 'Characters', 'Scenes', 'Uploads', 'Tools']
+      .map((name) => `<div role="menuitemradio" aria-checked="false">${name}</div>`)
+      .join('');
+    doc.body.appendChild(rail);
+  }
+
+  if (libraryTrigger) {
+    const decoy = doc.createElement('button');
+    decoy.type = 'button';
+    decoy.id = 'library-trigger';
+    decoy.className = 'settings-trigger-button';
+    decoy.setAttribute('aria-haspopup', 'menu');
+    decoy.setAttribute('aria-expanded', 'false');
+    decoy.setAttribute('aria-label', 'Settings trigger');
+    settingsBtn.parentNode.insertBefore(decoy, settingsBtn);
+    decoy.addEventListener('click', () => {
+      closePopover();
+      overlay.innerHTML = `
+        <div role="menu" aria-label="Library">
+          <div role="menuitemradio" aria-checked="true">All media</div>
+          <div role="menuitemradio" aria-checked="false">Images</div>
+          <div role="menuitemradio" aria-checked="false">Characters</div>
+          <div role="menuitemradio" aria-checked="false">Scenes</div>
+          <div role="menuitemradio" aria-checked="false">Uploads</div>
+          <div role="menuitemradio" aria-checked="false">Tools</div>
+        </div>`;
+      decoy.setAttribute('aria-expanded', 'true');
+    });
+  }
 
   // The gear opens a DIFFERENT menu (view options), like a toolbar settings control
   // that has nothing to do with generation settings.

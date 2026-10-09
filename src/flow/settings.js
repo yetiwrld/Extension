@@ -2,6 +2,8 @@ import { AutomationError, ERROR_CODES } from '../utils/errors.js';
 import { matchModelOption, modelLabelsMatch } from './model-id.js';
 import { accessibleName, clickElement, clickOutside, isVisible, normalizeText, pressEscape, waitForValue } from './dom.js';
 import {
+  snapshotOpenMenus,
+  findSettingsTriggerCandidates,
   classifyComposerState,
   classifySettingOption,
   diffSignatures,
@@ -132,22 +134,97 @@ async function runWithAgentRecovery(ctx, operation) {
   }
 }
 
+
+/** The short label of a trigger candidate, for traces and errors. */
+function triggerLabel(trigger) {
+  return String(trigger.label ?? accessibleName(trigger.el) ?? '').slice(0, 40);
+}
+
+/** A menu is the generation settings menu when it really offers one of its controls. */
+function recognizeGenerationMenu(options, chip) {
+  const keys = SETTING_KEYS.filter((key) =>
+    options.some((option) => classifySettingOption(option, { chipModel: chip.model }) === key),
+  );
+  const hasModelSubmenu = options.some(
+    (option) => classifySettingOption(option, { chipModel: chip.model }) === 'model' && isModelSubmenuTrigger(option),
+  );
+  return { ok: keys.length > 0 || hasModelSubmenu, keys, hasModelSubmenu };
+}
+
+/**
+ * Open Flow's GENERATION settings menu.
+ *
+ * Measured live: the highest-ranked control ("Settings trigger") opened the media
+ * library filter menu (All media, Images, Characters, Scenes, Uploads, Tools). So
+ * each candidate is opened in turn and its menu is checked; a wrong menu is closed
+ * and the next candidate tried. The scene only fails when NO candidate opens the
+ * generation menu, and the error then names every control tried and what its menu
+ * offered — nothing is guessed and no wrong menu is read as settings.
+ */
+async function openGenerationSettings(ctx, prompt, chip, trace) {
+  const candidates = findSettingsTriggerCandidates(ctx.doc, prompt.el);
+  if (!candidates.length) {
+    const trigger = await requireSettingsTrigger(ctx, prompt);
+    candidates.push(trigger);
+  }
+  const rejected = [];
+  for (const trigger of candidates) {
+    let opened = null;
+    try {
+      opened = await openSettingsPopover(ctx, trigger, prompt.el, chip);
+    } catch (error) {
+      rejected.push({ label: triggerLabel(trigger), offered: null, error });
+      continue;
+    }
+    const options = readPopoverOptions(opened.popover);
+    if (recognizeGenerationMenu(options, chip).ok) {
+      trace?.push({
+        step: 'trigger-found',
+        detail: `${trigger.strategy}: "${triggerLabel(trigger)}" (${trigger.control?.tag ?? trigger.el.tagName.toLowerCase()}.${trigger.control?.classes ?? ''})`,
+      });
+      trace?.push({ step: 'menu-opened', detail: `popover detected after clicking ${opened.click.control}` });
+      return { trigger, popover: opened.popover, click: opened.click, options, rejected };
+    }
+    // Wrong menu (live: the media library filter). Close it and try the next control.
+    const names = options.map((option) => option.name).filter(Boolean);
+    const offered = names.length ? names.join(', ') : visibleTextLines(opened.popover).join(', ') || '(none readable)';
+    rejected.push({ label: triggerLabel(trigger), offered });
+    trace?.push({ step: 'wrong-menu', detail: `"${triggerLabel(trigger)}" opened a different menu (${offered})` });
+    await closePopover(ctx, opened.popover);
+  }
+  const wrongMenus = rejected.filter((entry) => entry.offered);
+  // Nothing opened at all: the real open failure (presses, aria-expanded, backdrops)
+  // is far more useful than a summary, so it is reported unchanged.
+  if (!wrongMenus.length) throw rejected[0]?.error ?? (await requireSettingsTrigger(ctx, prompt), new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'The Flow settings menu did not open.'));
+  if (wrongMenus.length === 1 && rejected.length === 1) {
+    throw new AutomationError(
+      ERROR_CODES.FLOW_UI_CHANGED,
+      `The menu that opened ("${wrongMenus[0].label}") is not Flow's generation settings menu. ` +
+        `Its options: ${wrongMenus[0].offered}. ` +
+        `The model chip in the composer shows "${chipText(chip)}". Run "Check Flow page" in Settings for the full report.`,
+    );
+  }
+  const tried = rejected
+    .map((entry) => `"${entry.label}" -> ${entry.offered ?? `no menu opened (${entry.error?.message?.slice(0, 60) ?? 'unknown'})`}`)
+    .join(' | ');
+  throw new AutomationError(
+    ERROR_CODES.FLOW_UI_CHANGED,
+    `None of the controls next to the Flow prompt box opened Flow's generation settings menu. ` +
+      `Tried: ${tried}. ` +
+      `The model chip in the composer shows "${chipText(chip)}". Run "Check Flow page" in Settings for the full report.`,
+  );}
+
 export async function readFlowSettings(ctx) {
   return runWithAgentRecovery(ctx, () => readFlowSettingsOnce(ctx));
 }
 
 async function readFlowSettingsOnce(ctx) {
   const prompt = requirePromptBox(ctx.doc);
-  const trigger = await requireSettingsTrigger(ctx, prompt);
   const chip = findDetectedSettings(ctx.doc, prompt.el);
-  const trace = [
-    { step: 'trigger-found', detail: `${trigger.strategy}: "${String(trigger.label ?? '').slice(0, 40)}" (${trigger.control?.tag ?? trigger.el.tagName.toLowerCase()}.${trigger.control?.classes ?? ''})` },
-  ];
-  const { popover, click } = await openSettingsPopover(ctx, trigger, prompt.el, chip);
-  trace.push({ step: 'menu-opened', detail: `popover detected after clicking ${click.control}` });
+  const trace = [];
+  const { trigger, popover, click, options } = await openGenerationSettings(ctx, prompt, chip, trace);
   let nested = null;
   try {
-    const options = readPopoverOptions(popover);
     // The model list can be nested behind "Select model family": inspect it so the
     // model options and the current model are the real ones, not an empty list.
     const modelTrigger = options.find(
@@ -249,14 +326,10 @@ async function applyFlowSettingsOnce(ctx, target) {
       chipOutputs: chip.outputs ?? null,
     };
   }
-  const trigger = await requireSettingsTrigger(ctx, prompt);
-  trace.push({ step: 'trigger-found', detail: `${trigger.strategy}: "${String(trigger.label ?? '').slice(0, 40)}"` });
-  const { popover, click } = await openSettingsPopover(ctx, trigger, prompt.el, chip);
-  trace.push({ step: 'menu-opened', detail: `popover detected after clicking ${click.control}` });
+  const { popover, click, options } = await openGenerationSettings(ctx, prompt, chip, trace);
   let nested = null;
   let changed = false;
   try {
-    const options = readPopoverOptions(popover);
     // Model last: its nested menu replaces the surface the other keys are read from.
     const ordered = [...pending.filter((key) => key !== 'model'), ...(pending.includes('model') ? ['model'] : [])];
     for (const key of ordered) {
@@ -495,9 +568,12 @@ async function openSettingsPopover(ctx, trigger, promptEl, chip = null) {
   // for the page to settle first; nothing is removed from Flow's DOM.
   const settled = await settleOverlays(ctx);
   const before = snapshotMenuish(ctx.doc, { chipModel });
+  // Surfaces already open before the press (a snackbar, the library filter rail)
+  // are remembered so that only a NEWLY opened surface can count as the menu.
+  const preExisting = snapshotOpenMenus(ctx.doc, { exclude: promptEl });
   const wasConnected = control.isConnected;
   const expandedBefore = isExpanded(control);
-  let popover = await clickAndWait(ctx, control, promptEl, chipModel);
+  let popover = await clickAndWait(ctx, control, promptEl, chipModel, preExisting);
   let retried = false;
   let reclicked = false;
   if (!popover) {
@@ -507,7 +583,7 @@ async function openSettingsPopover(ctx, trigger, promptEl, chip = null) {
     const freshControl = fresh?.el ?? null;
     if (freshControl && freshControl !== control && freshControl.isConnected) {
       retried = true;
-      popover = await clickAndWait(ctx, freshControl, promptEl, chipModel);
+      popover = await clickAndWait(ctx, freshControl, promptEl, chipModel, preExisting);
     }
   }
   if (!popover) {
@@ -516,9 +592,9 @@ async function openSettingsPopover(ctx, trigger, promptEl, chip = null) {
     // Bounded at a single extra press, and only while no menu is open.
     await settleOverlays(ctx);
     const again = findSettingsTrigger(ctx.doc, promptEl)?.el ?? (control.isConnected ? control : null);
-    if (again && !findSettingsMenu(ctx.doc, { exclude: promptEl, chipModel })) {
+    if (again && !findSettingsMenu(ctx.doc, { exclude: promptEl, chipModel, ignore: preExisting })) {
       reclicked = true;
-      popover = await clickAndWait(ctx, again, promptEl, chipModel);
+      popover = await clickAndWait(ctx, again, promptEl, chipModel, preExisting);
     }
   }
   const after = snapshotMenuish(ctx.doc, { chipModel });
@@ -580,10 +656,10 @@ async function settleOverlays(ctx) {
 }
 
 /** Click the control and wait for a menu to appear anywhere in the document. */
-async function clickAndWait(ctx, control, promptEl, chipModel) {
+async function clickAndWait(ctx, control, promptEl, chipModel, ignore = null) {
   if (!control.isConnected) return null;
   clickElement(control);
-  return waitForValue(() => findSettingsMenu(ctx.doc, { exclude: promptEl, chipModel }), {
+  return waitForValue(() => findSettingsMenu(ctx.doc, { exclude: promptEl, chipModel, ignore }), {
     timeoutMs: ctx.timings.popoverMs,
     intervalMs: 80,
     sleep: ctx.sleep,
@@ -622,9 +698,12 @@ async function waitForClosed(ctx, popover) {
  * resolves either shape. Returns null when nothing new opens.
  */
 async function openNestedMenu(ctx, parentMenu, triggerEl, promptEl, chip = null) {
+  // Surfaces standing open before the submenu is clicked (live: the media library
+  // rail) must not be mistaken for the model list it opens.
+  const ignore = snapshotOpenMenus(ctx.doc, { exclude: promptEl });
   clickElement(triggerEl);
   await ctx.sleep(ctx.timings.settleMs);
-  return waitForValue(() => pickNewMenuSurface(ctx.doc, parentMenu, promptEl, { chipModel: chip?.model ?? null }), {
+  return waitForValue(() => pickNewMenuSurface(ctx.doc, parentMenu, promptEl, { chipModel: chip?.model ?? null, ignore }), {
     timeoutMs: ctx.timings.popoverMs,
     intervalMs: 80,
     sleep: ctx.sleep,

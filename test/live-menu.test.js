@@ -413,3 +413,47 @@ test('a setting Flow does not offer is reported, not clicked and not failed', as
   assert.ok(result.trace.some((line) => line.step === 'not-offered' && /Mode/.test(line.detail)));
   assert.equal(page.state.aspectRatio, '9:16', 'the settings Flow DOES offer were still applied');
 });
+
+test('a control that opens the media library menu is skipped for the model chip', async () => {
+  // Measured live: "Settings trigger" opened All media / Images / Characters /
+  // Scenes / Uploads / Tools. The model chip is what Flow's help says to click,
+  // so it is ranked first and the library control is never read as settings.
+  const { adapter } = fixturePage({ liveMenu: true, libraryTrigger: true });
+  const read = await adapter.readSettings();
+  assert.ok(read.options.aspectRatio.length > 0, 'the real generation menu was read');
+  assert.match(read.strategy, /model-name/, 'the model chip is the trigger that was used');
+});
+
+test('when a control opens the wrong menu the next candidate is tried', async () => {
+  // Chip first (wrong menu), then the library control (also wrong): the error names
+  // every control tried and what each menu offered, and nothing is read as settings.
+  const { adapter } = fixturePage({ chipOpensViewMenu: true, libraryTrigger: true });
+  await assert.rejects(adapter.readSettings(), (error) => {
+    assert.match(error.message, /None of the controls/);
+    assert.match(error.message, /dashboardGrid/, 'the chip\'s wrong menu is named');
+    assert.match(error.message, /All media/, 'the library control\'s wrong menu is named');
+    return true;
+  });
+});
+
+test("Flow's undo snackbar is never read as the settings menu", async () => {
+  // Measured live: the read returned "6 items moved to bin, Undo, View in bin,
+  // Dismiss" as the menu's options. A status surface is not a menu.
+  const { adapter } = fixturePage({ liveMenu: true, snackbar: true });
+  const read = await adapter.readSettings();
+  assert.ok(read.options.aspectRatio.length > 0, 'the real generation menu was read');
+  assert.ok(
+    !JSON.stringify(read.options).includes('Undo'),
+    'no snackbar button leaked into the settings options',
+  );
+});
+
+test('a panel that was already open before the click is not the menu the click opened', async () => {
+  // Measured live: the media library filter rail (All media, Images, ...) was
+  // standing open and was reported as the menu that the trigger opened.
+  const { adapter } = fixturePage({ liveMenu: true, libraryRail: true });
+  const read = await adapter.readSettings();
+  assert.ok(read.options.aspectRatio.length > 0, 'the real generation menu was read');
+  assert.ok(!JSON.stringify(read.options).includes('All media'), 'the rail is not read as settings');
+  assert.ok(read.options.model.length > 0, 'the real model list was still read');
+});

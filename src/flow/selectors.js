@@ -774,6 +774,22 @@ export function collectModelNamedControls(scope, { interactiveOnly = false, limi
  * how an unrelated option can be mistaken for the model.
  */
 export function findSettingsTrigger(doc, promptEl) {
+  return findSettingsTriggerCandidates(doc, promptEl)[0] ?? null;
+}
+
+/**
+ * Every plausible settings trigger, best first.
+ *
+ * Measured live (2026-10-09): the top-ranked control named "Settings trigger" opened
+ * Flow's MEDIA LIBRARY filter menu (All media, Images, Characters, Scenes, Uploads,
+ * Tools) — not the generation settings. A single best guess is therefore not enough:
+ * the caller opens candidates in order and keeps the one whose menu really is the
+ * generation menu, instead of failing the scene on the first wrong menu.
+ *
+ * Ranking puts the composer's MODEL CHIP first, because that is the control Google's
+ * own help names ("in the prompt box, click the model name").
+ */
+export function findSettingsTriggerCandidates(doc, promptEl, { limit = 4 } = {}) {
   const region = findPromptRegion(promptEl) ?? doc;
   // The ACTIVE composer wins: in Agent mode the classic composer is hidden and the
   // prompt box may be found in the Agent composer, whose controls do not open the
@@ -797,7 +813,9 @@ export function findSettingsTrigger(doc, promptEl) {
       .filter((el) => el.tagName === 'BUTTON' && /settings(-trigger|-button)?/i.test(el.getAttribute('class') ?? ''))
       .map((el) => ({ el, rank: 3, named: 'settings-class' })),
     ...collectHosts(region, 1),
-    ...collectModelNamedControls(region),
+    // The model chip outranks every other in-region candidate: it is the control
+    // Flow's own help tells you to click, and it was the one that worked live.
+    ...collectModelNamedControls(region).map((item) => ({ ...item, rank: Math.max(item.rank ?? 0, 4) })),
   ].filter((item) => item.rank >= 1);
   // Document-wide fallback: model-named controls only, and only interactive ones —
   // a model name in a project-card title must never be clicked.
@@ -809,29 +827,40 @@ export function findSettingsTrigger(doc, promptEl) {
     seen.add(item.el);
     return true;
   });
-  const found = bestTrigger(all);
-  if (!found) return null;
-  const inRegion = inRegionList.some((item) => item.el === found.el);
-  const opensPopup = found.el.hasAttribute('aria-haspopup') || found.el.hasAttribute('aria-expanded');
-  const base = opensPopup ? 'settings-trigger-aria-haspopup' : 'settings-trigger-by-name';
-  const named = found.name && !opensPopup ? 'settings-trigger-model-name' : base;
-  const strategy = inRegion ? named : `${named}-in-document`;
-  // The visible label is often a child of the real button: click the control, keep the label.
-  const resolved = resolveInteractiveControl(found.el);
-  const control = resolved?.el ?? found.el;
-  return {
-    el: control,
-    label: found.name ?? accessibleName(found.el) ?? controlLabel(found.el),
-    control: {
+  const ambiguous = isAmbiguous(all);
+  const ordered = [...all].sort((a, b) => b.rank - a.rank);
+  const out = [];
+  const seenControls = new Set();
+  for (const found of ordered) {
+    if (out.length >= limit) break;
+    const inRegion = inRegionList.some((item) => item.el === found.el);
+    const opensPopup = found.el.hasAttribute('aria-haspopup') || found.el.hasAttribute('aria-expanded');
+    const base = opensPopup ? 'settings-trigger-aria-haspopup' : 'settings-trigger-by-name';
+    const named = found.name && !opensPopup ? 'settings-trigger-model-name' : base;
+    const strategy = inRegion ? named : `${named}-in-document`;
+    // The visible label is often a child of the real button: click the control, keep the label.
+    const resolved = resolveInteractiveControl(found.el);
+    const control = resolved?.el ?? found.el;
+    // Two labels can resolve to the SAME button: clicking it twice would only retry
+    // the identical menu, so each control appears once.
+    if (seenControls.has(control)) continue;
+    seenControls.add(control);
+    out.push({
       el: control,
-      tag: control.tagName.toLowerCase(),
-      classes: (control.getAttribute('class') ?? '').slice(0, 80),
-      via: resolved?.via ?? 'self',
-    },
-    foundElement: { tag: found.el.tagName.toLowerCase(), classes: (found.el.getAttribute('class') ?? '').slice(0, 80), interactive: isRealControl(found.el) },
-    strategy,
-    ambiguous: isAmbiguous(all),
-  };
+      label: found.name ?? accessibleName(found.el) ?? controlLabel(found.el),
+      control: {
+        el: control,
+        tag: control.tagName.toLowerCase(),
+        classes: (control.getAttribute('class') ?? '').slice(0, 80),
+        via: resolved?.via ?? 'self',
+      },
+      foundElement: { tag: found.el.tagName.toLowerCase(), classes: (found.el.getAttribute('class') ?? '').slice(0, 80), interactive: isRealControl(found.el) },
+      strategy,
+      rank: found.rank,
+      ambiguous,
+    });
+  }
+  return out;
 }
 
 /** Find the settings trigger, waiting a bounded time for Flow's asynchronous UI to render it. */
@@ -1357,16 +1386,51 @@ export function findOpenPopover(doc, { exclude = null } = {}) {
   return pool.length ? pool[pool.length - 1].el : null;
 }
 
+/** What a surface shows right now, used to tell "already open" from "just opened". */
+export function surfaceSignature(el) {
+  return normalizeText(el.textContent ?? '').slice(0, 200);
+}
+
+/** Snapshot of the surfaces open BEFORE a trigger is clicked: element -> content. */
+export function snapshotOpenMenus(doc, { exclude = null } = {}) {
+  const map = new Map();
+  for (const item of collectOpenMenus(doc, { exclude })) map.set(item.el, surfaceSignature(item.el));
+  return map;
+}
+
+/**
+ * A transient status surface (snackbar / toast / live region), never a menu.
+ * Measured live: Flow's undo snackbar after deleting items was picked up as the
+ * "menu that opened" and its buttons were read as settings options.
+ */
+export function isStatusSurface(el) {
+  const role = el.getAttribute('role');
+  if (role === 'status' || role === 'alert' || role === 'log' || role === 'marquee' || role === 'timer') return true;
+  if (el.hasAttribute('aria-live')) return true;
+  const tag = el.tagName.toLowerCase();
+  const classes = el.getAttribute('class') ?? '';
+  if (/snack-?bar|toast/i.test(tag) || /snack-?bar|toast/i.test(classes)) return true;
+  return Boolean(el.closest?.('[role="status"], [role="alert"], [aria-live], mat-snack-bar-container, .mat-mdc-snack-bar-container'));
+}
+
 /**
  * Every open menu surface, in document order, as `{ el, isMenu }`. A real menu or
  * listbox beats a bare open-state wrapper or a dialog when several match.
  */
-export function collectOpenMenus(doc, { exclude = null } = {}) {
+export function collectOpenMenus(doc, { exclude = null, ignore = null } = {}) {
   const out = [];
   for (const scope of collectMenuScopes(doc)) {
     for (const el of scope.querySelectorAll(MENU_SELECTOR)) {
       if (!isVisible(el)) continue;
       if (exclude && (el === exclude || el.contains(exclude))) continue;
+      // A status surface is never a menu. Measured live: Flow's "6 items moved to
+      // bin / Undo / View in bin / Dismiss" snackbar was read as the settings menu.
+      if (isStatusSurface(el)) continue;
+      // A surface that was already open before the trigger was clicked, AND still
+      // shows exactly the same content, cannot be the menu the click opened (live:
+      // the media library filter rail). A persistent overlay CONTAINER whose content
+      // changed is still a candidate, which is how portal menus render.
+      if (ignore && ignore.get(el) === surfaceSignature(el)) continue;
       const role = el.getAttribute('role');
       out.push({ el, isMenu: role === 'menu' || role === 'listbox' });
     }
@@ -1382,8 +1446,8 @@ export function collectOpenMenus(doc, { exclude = null } = {}) {
  * (a role-less menu) are included: a menu Flow renders without ARIA roles must not
  * be invisible to the reader.
  */
-export function pickNewMenuSurface(doc, previous, promptEl = null, { chipModel = null } = {}) {
-  const candidates = collectOpenMenus(doc).filter(({ el }) => {
+export function pickNewMenuSurface(doc, previous, promptEl = null, { chipModel = null, ignore = null } = {}) {
+  const candidates = collectOpenMenus(doc, { ignore }).filter(({ el }) => {
     if (previous && (el === previous || el.contains(previous))) return false;
     if (promptEl && (el === promptEl || el.contains(promptEl))) return false;
     return true;
@@ -1393,7 +1457,7 @@ export function pickNewMenuSurface(doc, previous, promptEl = null, { chipModel =
   const pool = menus.length ? menus : outside.length ? outside : candidates;
   if (pool.length) return pool[pool.length - 1].el;
   // Nothing role-based: fall back to a menu recognised by its CONTENT.
-  return findSettingsMenuByContent(doc, { exclude: previous ?? promptEl, chipModel });
+  return findSettingsMenuByContent(doc, { exclude: previous ?? promptEl, chipModel, ignore });
 }
 
 /**
@@ -1405,7 +1469,7 @@ export function pickNewMenuSurface(doc, previous, promptEl = null, { chipModel =
  * a huge wrapper). The composer's own controls never qualify: its rows do not
  * classify as settings.
  */
-export function findSettingsMenuByContent(doc, { exclude = null, chipModel = null } = {}) {
+export function findSettingsMenuByContent(doc, { exclude = null, chipModel = null, ignore = null } = {}) {
   const rows = [];
   for (const scope of collectMenuScopes(doc)) {
     const walker = (scope.ownerDocument ?? scope).createTreeWalker(scope, 1);
@@ -1504,12 +1568,12 @@ export function isExpanded(el) {
   return el?.getAttribute?.('aria-expanded') === 'true';
 }
 
-export function findSettingsMenu(doc, { exclude = null, chipModel = null } = {}) {
-  const all = collectOpenMenus(doc, { exclude });
+export function findSettingsMenu(doc, { exclude = null, chipModel = null, ignore = null } = {}) {
+  const all = collectOpenMenus(doc, { exclude, ignore });
   const menus = all.filter((item) => item.isMenu);
   const pool = menus.length ? menus : all;
   if (pool.length) return pool[pool.length - 1].el;
-  return findSettingsMenuByContent(doc, { exclude, chipModel });
+  return findSettingsMenuByContent(doc, { exclude, chipModel, ignore });
 }
 
 /**
