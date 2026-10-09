@@ -19,3 +19,5 @@ npm-debug.log*
 .env
 .env.*
 release/
+
+.diag-e2e.mjs
