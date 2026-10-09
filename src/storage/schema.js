@@ -80,7 +80,13 @@ export function defaultValue(key) {
     case STORAGE_KEYS.logs:
       return [];
     case STORAGE_KEYS.flowSettings:
-      return { current: { mode: null, model: null, aspectRatio: null }, options: { mode: [], model: [], aspectRatio: [] }, readAt: null, source: null };
+      return {
+        current: { mode: null, model: null, aspectRatio: null },
+        options: { mode: [], model: [], aspectRatio: [] },
+        readAt: null,
+        source: null,
+        readError: null,
+      };
     case STORAGE_KEYS.library:
       return [];
     case STORAGE_KEYS.connection:

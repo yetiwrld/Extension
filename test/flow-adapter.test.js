@@ -232,9 +232,36 @@ test('an error that was already on screen before the scene is not reported again
 test('diagnose lists each check with a plain-language result', async () => {
   const report = await current.adapter.diagnose();
   const labels = report.checks.map((item) => item.label);
-  assert.deepEqual(labels, ['Flow page', 'Project open', 'Prompt box', 'Generate button', 'Settings control', 'Agent mode', 'Page checks']);
+  assert.deepEqual(labels, [
+    'Flow page',
+    'Project open',
+    'Prompt box',
+    'Model chip',
+    'Generate button',
+    'Settings control',
+    'Agent mode',
+    'Page checks',
+  ]);
   assert.ok(report.checks.every((item) => typeof item.detail === 'string' && item.detail.length > 0));
   assert.equal(report.checks.find((item) => item.label === 'Prompt box').ok, true);
+});
+
+test('diagnose attempts the settings read and reports the chip, the values and the menu evidence', async () => {
+  const report = await current.adapter.diagnose();
+  assert.equal(report.modelChip, 'Nano Banana Pro');
+  assert.equal(report.settingsRead.attempted, true);
+  assert.equal(report.settingsRead.ok, true);
+  assert.deepEqual(report.settingsRead.current, { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9' });
+  assert.deepEqual(report.settingsRead.options.model, ['Nano Banana Pro', 'Nano Banana']);
+  assert.equal(report.settingsRead.chipModel, 'Nano Banana Pro');
+  assert.equal(report.settingsRead.modelMatchesChip, true);
+  const settingsCheck = report.checks.find((item) => item.label === 'Settings control');
+  assert.equal(settingsCheck.ok, true);
+  assert.match(settingsCheck.detail, /Read OK: mode=Image, model=Nano Banana Pro, aspectRatio=16:9/);
+  assert.match(settingsCheck.detail, /chip shows "Nano Banana Pro"/);
+  const chipCheck = report.checks.find((item) => item.label === 'Model chip');
+  assert.equal(chipCheck.ok, true);
+  assert.match(chipCheck.detail, /Nano Banana Pro/);
 });
 
 test('handleFlowCommand returns errors as payloads instead of throwing into the page', async () => {

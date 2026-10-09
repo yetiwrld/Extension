@@ -143,6 +143,7 @@ export class Controller {
       .catch(async (error) => {
         this.settingsRetryAfter = this.now() + 60000;
         await this.log('info', `Flow settings are not read yet: ${toErrorPayload(error).message}`);
+        await this.storeFlowSettingsError(error);
       })
       .finally(() => {
         this.settingsReadPromise = null;
@@ -169,8 +170,16 @@ export class Controller {
       options: result.options,
       readAt: this.now(),
       source: 'flow',
+      readError: null,
     }));
     return this.store.read(K.flowSettings);
+  }
+
+  /** Remember why a settings read failed, so the panel can show it instead of a bare "Not read yet". */
+  async storeFlowSettingsError(error) {
+    const message = toErrorPayload(error).message;
+    await this.store.update(K.flowSettings, (current) => ({ ...current, readError: message }));
+    return message;
   }
 
   /** Point the automation at a tab, unless a run is active (a run keeps its own tab). */
@@ -333,12 +342,18 @@ export class Controller {
 
   async refreshFlowSettings() {
     this.assertNotActive('Settings are read at the start of each run. Stop the automation to read them now.');
-    return this.withFlowCommand(() =>
-      this.withFlowTab(async () => {
-        const result = await this.bridge.readSettings();
-        return this.storeFlowSettings(result);
-      }),
-    );
+    try {
+      return await this.withFlowCommand(() =>
+        this.withFlowTab(async () => {
+          const result = await this.bridge.readSettings();
+          return this.storeFlowSettings(result);
+        }),
+      );
+    } catch (error) {
+      // Keep the failure visible in the settings card, not only in a passing notice.
+      await this.storeFlowSettingsError(error);
+      throw error;
+    }
   }
 
   async setFlowSetting({ key, value }) {

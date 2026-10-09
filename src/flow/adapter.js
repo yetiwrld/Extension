@@ -73,13 +73,7 @@ export function createFlowAdapter(options = {}) {
       const note = (label, error) => {
         const message = String(error?.message ?? error);
         issues.push(`${label}: ${message}`);
-        // The stack helps pin a failing heuristic; it is trimmed so the report stays small.
-        const stack = String(error?.stack ?? '')
-          .split('\n')
-          .slice(0, 3)
-          .join(' | ')
-          .slice(0, 300);
-        exceptions.push({ label, message, stack });
+        exceptions.push({ label, message, stack: trimStack(error) });
       };
       const guarded = (label, read, fallback = null) => {
         try {
@@ -170,6 +164,31 @@ export function createFlowAdapter(options = {}) {
     /** Human-readable checks for the side panel. */
     async diagnose() {
       const probe = await adapter.probe();
+      // Attempt the settings read. This is the step that fails on a mismatched page,
+      // so the report must show exactly what happened: which control was clicked,
+      // whether a menu opened, and which options it offered. Opening the settings
+      // menu is read-only: it never submits a prompt and never spends credits.
+      let settingsRead = { attempted: false, ok: false, error: null, code: null };
+      const readExceptions = [];
+      if (probe.promptFound) {
+        try {
+          const result = await readFlowSettings(ctx);
+          settingsRead = {
+            attempted: true,
+            ok: true,
+            current: result.current,
+            options: result.options,
+            strategy: result.strategy,
+            chipModel: result.chipModel,
+            modelMatchesChip: result.modelMatchesChip,
+          };
+        } catch (error) {
+          const payload = toErrorPayload(error);
+          settingsRead = { attempted: true, ok: false, error: payload.message, code: payload.code };
+          readExceptions.push({ label: 'settings read', message: payload.message, stack: trimStack(error) });
+        }
+      }
+      const chipModel = probe.detectedSettings?.model ?? null;
       const checks = [
         check(
           'Flow page',
@@ -185,18 +204,31 @@ export function createFlowAdapter(options = {}) {
           !probe.isProjectPage && probe.workspaceDetected,
         ),
         check('Prompt box', probe.promptFound, promptFoundDetail(probe)),
-        check('Generate button', probe.generateFound, probe.generateFound ? `Found (${probe.generateStrategy}), ${probe.generateEnabled ? 'enabled' : 'disabled'}.` : 'Not found.'),
         check(
-          'Settings control',
-          probe.settingsFound,
-          probe.settingsFound
-            ? `Found (${probe.settingsStrategy}).${probe.settingsAmbiguous ? ' Several controls match; the first was used.' : ''}`
-            : settingsNotFoundDetail(probe.promptControls),
+          'Model chip',
+          Boolean(chipModel),
+          chipModel
+            ? `The composer's model chip shows "${chipModel}".`
+            : probe.promptFound
+              ? 'No model chip identified in the composer; the controls list below shows what is there.'
+              : 'No composer to read a chip from.',
+          !chipModel && probe.promptFound,
         ),
+        check('Generate button', probe.generateFound, probe.generateFound ? `Found (${probe.generateStrategy}), ${probe.generateEnabled ? 'enabled' : 'disabled'}.` : 'Not found.'),
+        // A found control whose menu cannot be read is NOT ok: a failed capability
+        // must be visible, not hidden behind a green check.
+        check('Settings control', settingsRead.ok || (!settingsRead.attempted && probe.settingsFound), settingsControlDetail(probe, settingsRead)),
         check('Agent mode', !probe.agentOn, probe.agentFound ? (probe.agentOn ? 'Agent is ON. Turn it off.' : 'Off.') : 'No agent control detected.'),
         check('Page checks', probe.issues.length === 0, probe.issues.length ? probe.issues.join('; ') : 'All page checks ran.'),
       ];
-      return { ...probe, checks, adapterVersion: ADAPTER_VERSION };
+      return {
+        ...probe,
+        checks,
+        settingsRead,
+        modelChip: chipModel,
+        exceptions: [...(probe.exceptions ?? []), ...readExceptions],
+        adapterVersion: ADAPTER_VERSION,
+      };
     },
 
     /** Read Flow's Mode / Model / Aspect ratio from its own popover. */
@@ -277,6 +309,33 @@ export async function handleFlowCommand(adapter, command, payload) {
 
 function check(label, ok, detail, warn = false) {
   return { label, ok: Boolean(ok), warn, detail: normalizeText(detail) };
+}
+
+/** The stack helps pin a failing heuristic; it is trimmed so the report stays small. */
+function trimStack(error) {
+  return String(error?.stack ?? '')
+    .split('\n')
+    .slice(0, 3)
+    .join(' | ')
+    .slice(0, 300);
+}
+
+/**
+ * What the settings-control check says: a successful read with the values, a missing
+ * control with the controls that ARE near the prompt, or a found control whose menu
+ * could not be read (with the exact error).
+ */
+function settingsControlDetail(probe, settingsRead) {
+  if (settingsRead.ok) {
+    const current = settingsRead.current ?? {};
+    const bits = ['mode', 'model', 'aspectRatio'].map((key) => `${key}=${current[key] ?? 'unknown'}`).join(', ');
+    const chip = settingsRead.chipModel
+      ? ` The composer's chip shows "${settingsRead.chipModel}"${settingsRead.modelMatchesChip ? '' : ' — differs from the menu!'}.`
+      : '';
+    return `Read OK: ${bits}.${chip}`;
+  }
+  if (!probe.settingsFound) return settingsNotFoundDetail(probe.promptControls);
+  return `Found (${probe.settingsStrategy ?? 'unknown strategy'}), but reading it failed: ${settingsRead.error ?? 'unknown error'}`;
 }
 
 /** What the prompt-box check says, including why the composer was selected (or why none was). */

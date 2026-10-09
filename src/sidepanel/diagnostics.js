@@ -58,6 +58,30 @@ export function formatDiagnosticsReport(d) {
     detected.aspectRatio ? `aspectRatio=${detected.aspectRatio}` : null,
   ].filter(Boolean);
   lines.push(`Detected in Flow: ${detectedParts.length ? detectedParts.join(', ') : 'not identifiable without opening the settings menu'}`);
+  const chipModel = d.modelChip ?? detected.model ?? null;
+  lines.push(`Model chip in the composer: ${chipModel ? `"${chipModel}"` : 'not identified'}`);
+
+  // The settings-read attempt: which control was clicked, whether a menu opened,
+  // and which options it offered. This is the evidence for "did not open" and for
+  // any value the panel shows.
+  const read = d.settingsRead;
+  if (read?.attempted) {
+    lines.push('', 'Settings read attempt:');
+    if (read.ok) {
+      const current = read.current ?? {};
+      const bits = ['mode', 'model', 'aspectRatio'].map((key) => `${key}=${current[key] ?? 'unknown'}`);
+      lines.push(` - ok (${read.strategy ?? 'unknown strategy'}): ${bits.join(', ')}`);
+      for (const key of ['mode', 'model', 'aspectRatio']) {
+        const options = Array.isArray(read.options?.[key]) ? read.options[key] : [];
+        if (options.length) lines.push(` - ${key} options: ${options.join(', ')}`);
+      }
+      if (read.chipModel) {
+        lines.push(` - composer chip shows "${read.chipModel}"${read.modelMatchesChip === false ? ' — DIFFERS from the menu' : ''}`);
+      }
+    } else {
+      lines.push(` - FAILED (${read.code ?? 'unknown code'}): ${read.error ?? 'unknown error'}`);
+    }
+  }
 
   const selectors = Array.isArray(d.selectorResults) ? d.selectorResults : [];
   if (selectors.length) {

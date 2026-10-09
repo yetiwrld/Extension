@@ -77,7 +77,7 @@ test('a trigger outside the detected prompt region is found in the document', ()
   const trigger = findSettingsTrigger(window.document, promptOf(window));
   assert.ok(trigger, 'the model control is found even outside the prompt region');
   assert.equal(trigger.el.id, 'model');
-  assert.equal(trigger.strategy, 'settings-trigger-by-name-in-document');
+  assert.equal(trigger.strategy, 'settings-trigger-model-name-in-document');
 });
 
 test('a weak document-wide match (a bare "Video" tab) is never clicked when nothing stronger exists', () => {

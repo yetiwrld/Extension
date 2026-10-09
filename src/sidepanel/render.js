@@ -56,7 +56,14 @@ export function renderFlowSettings(snapshot, ui) {
   const active = isActive(snapshot?.automation);
   const connected = snapshot?.connection?.status === 'connected';
   const readable = connected && !active;
-  const readText = settings.readAt ? `Last read ${clock(settings.readAt)}.` : 'Not read yet. Open a Flow project, then press Read from Flow.';
+  const readText = settings.readError
+    ? `Read failed: ${settings.readError}`
+    : settings.readAt
+      ? `Last read ${clock(settings.readAt)}.`
+      : 'Not read yet. Open a Flow project, then press Read from Flow.';
+  // Ground truth straight from the composer: the model chip's own text.
+  const chipModel = snapshot?.connection?.detectedSettings?.model ?? null;
+  const chipNote = chipModel ? `<p class="settings-note">Flow's composer shows: model ${esc(chipModel)}.</p>` : '';
   return `
     <div class="card-head">
       <h2 id="h-flow-settings">Flow settings</h2>
@@ -68,7 +75,14 @@ export function renderFlowSettings(snapshot, ui) {
       ${settingSelect('model', 'Model', settings, readable && !ui.busy)}
       ${settingSelect('aspectRatio', 'Aspect ratio', settings, readable && !ui.busy)}
     </div>
-    <p class="settings-note">${esc(readText)}</p>`;
+    <p class="settings-note">${esc(readText)}</p>
+    ${chipNote}`;
+}
+
+/** What an empty select shows: never read / read but unknown / not offered in this mode. */
+function settingEmptyValue(key, settings, enabled) {
+  if (settings.readAt) return key === 'aspectRatio' ? 'Not offered in this mode' : 'Unknown';
+  return enabled ? 'Not read yet' : 'Unavailable';
 }
 
 function settingSelect(key, label, settings, enabled) {
@@ -76,7 +90,7 @@ function settingSelect(key, label, settings, enabled) {
   const current = settings.current?.[key] ?? '';
   if (!options.length) {
     // Flow exposed no choices: show its value (or the state), and offer nothing to pick.
-    const shown = current || (enabled ? 'Not read yet' : 'Unavailable');
+    const shown = current || settingEmptyValue(key, settings, enabled);
     return `
     <label class="field">
       <span class="field-label">${esc(label)}</span>
@@ -423,6 +437,22 @@ function renderDiagnosticsExtras(diagnostics) {
   const detectedLine = detectedParts.length
     ? `<div class="check is-ok"><span class="check-icon">\u2713</span><span><span class="check-label">Detected in Flow</span> <span class="check-detail">${detectedParts.join(' \u00b7 ')}</span></span></div>`
     : '';
+  // The composer's own model chip: ground truth, independent of any menu.
+  const chipModel = diagnostics.modelChip ?? detected.model ?? null;
+  const chipLine = chipModel
+    ? `<div class="check is-ok"><span class="check-icon">\u2713</span><span><span class="check-label">Model chip</span> <span class="check-detail">the composer shows ${esc(chipModel)}</span></span></div>`
+    : '';
+  // The settings-read attempt: which control was clicked, whether the menu opened.
+  const read = diagnostics.settingsRead;
+  const readLine = read?.attempted
+    ? read.ok
+      ? (() => {
+          const current = read.current ?? {};
+          const bits = ['mode', 'model', 'aspectRatio'].map((key) => `${key}=${current[key] ?? 'unknown'}`);
+          return `<div class="check is-ok"><span class="check-icon">\u2713</span><span><span class="check-label">Settings read</span> <span class="check-detail">${esc(bits.join(', '))}${read.chipModel ? ` · chip shows ${esc(read.chipModel)}` : ''}</span></span></div>`;
+        })()
+      : `<div class="check is-bad"><span class="check-icon">\u2715</span><span><span class="check-label">Settings read</span> <span class="check-detail">failed: ${esc(read.error ?? 'unknown error')}</span></span></div>`
+    : '';
   const frames = diagnostics.frames;
   const framesLine = frames
     ? `<div class="check"><span class="check-icon">\u2139</span><span><span class="check-label">Frames</span> <span class="check-detail">${esc(
@@ -480,7 +510,7 @@ function renderDiagnosticsExtras(diagnostics) {
         )
         .join('')}</ul></details>`
     : '';
-  return `${detectedLine}${framesLine}${selectorsBlock}${candidatesBlock}${controlsBlock}${exceptionsBlock}
+  return `${detectedLine}${chipLine}${readLine}${framesLine}${selectorsBlock}${candidatesBlock}${controlsBlock}${exceptionsBlock}
     <div class="row"><button type="button" class="btn btn-secondary btn-sm" data-action="copy-diagnostics">Copy report</button></div>`;
 }
 

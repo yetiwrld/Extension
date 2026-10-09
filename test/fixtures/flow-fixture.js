@@ -14,6 +14,14 @@
  *   'input'           prompt is a single-line <input> (chat-style composer)
  *   'agent'           the Agent layout: a chat panel replaces the standard prompt box
  *   'late'            the standard composer is rendered ~60ms after install
+ *
+ * Options:
+ *   chipPlain        the model chip is a plain <div> with no button semantics (as on
+ *                    the live page, where it was missed by every semantic selector)
+ *   gearMenu         a gear button in the top toolbar opens a WRONG menu (view
+ *                    options like "dashboardGrid"), reproducing the misread
+ *   chipOpensViewMenu the chip itself opens the view menu (wrong menu, right control)
+ *   chipDead         the chip opens nothing at all (the "menu did not open" path)
  */
 
 export const FIXTURE_CATALOG = Object.freeze({
@@ -35,7 +43,10 @@ const COMPOSER_HTML = {
   input: '<input id="prompt" type="text" placeholder="Describe your image or video">',
 };
 
-export function installFlowFixture(window, { variant = 'textarea', flowWithMissingUpload = false, lateComposerMs = 60 } = {}) {
+export function installFlowFixture(
+  window,
+  { variant = 'textarea', flowWithMissingUpload = false, lateComposerMs = 60, chipPlain = false, gearMenu = false, chipOpensViewMenu = false, chipDead = false } = {},
+) {
   const doc = window.document;
   const state = {
     mode: 'Image',
@@ -49,6 +60,10 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
   };
 
   const agentLayout = variant === 'agent';
+  const chip = chipPlain
+    ? `<div id="settings-btn" class="model-chip">${state.model} \u25be</div>`
+    : `<button type="button" id="settings-btn" aria-haspopup="menu" aria-expanded="false">${state.model} \u25be</button>`;
+  const gear = gearMenu ? '<button type="button" id="gear" aria-haspopup="menu" aria-label="Settings">\u2699</button>' : '';
   doc.body.innerHTML = agentLayout
     ? `
     <main>
@@ -71,13 +86,13 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
     </main>`
     : `
     <main>
-      <header class="top"><button type="button" aria-label="Create new project">New project</button></header>
+      <header class="top"><button type="button" aria-label="Create new project">New project</button>${gear}</header>
       <section class="results" id="results" aria-label="Results"></section>
       <div class="prompt-box" id="prompt-box">
         <div class="refs" id="refs"></div>
         <div class="controls-row">
           <button type="button" id="add-btn" aria-haspopup="menu">+ Add</button>
-          <button type="button" id="settings-btn" aria-haspopup="menu" aria-expanded="false">${state.model} \u25be</button>
+          ${chip}
           <button type="button" id="agent" role="switch" aria-checked="false">Agent</button>
         </div>
         <div id="prompt-slot"></div>
@@ -162,9 +177,36 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
   });
 
   settingsBtn.addEventListener('click', () => {
+    if (chipDead) return; // the control opens nothing
+    if (chipOpensViewMenu) {
+      // The right control, the wrong menu: a view menu, not generation settings.
+      closePopover();
+      overlay.innerHTML = `
+        <div role="menu" aria-label="View">
+          <div role="menuitemradio" data-value="dashboardGrid" aria-checked="true">dashboardGrid</div>
+          <div role="menuitemradio" data-value="listView" aria-checked="false">listView</div>
+        </div>`;
+      settingsBtn.setAttribute('aria-expanded', 'true');
+      return;
+    }
     if (settingsBtn.getAttribute('aria-expanded') === 'true') closePopover();
     else openSettings();
   });
+
+  // The gear opens a DIFFERENT menu (view options), like a toolbar settings control
+  // that has nothing to do with generation settings.
+  const gearBtn = $('#gear');
+  if (gearBtn) {
+    gearBtn.addEventListener('click', () => {
+      closePopover();
+      overlay.innerHTML = `
+        <div role="menu" aria-label="View">
+          <div role="menuitemradio" data-value="dashboardGrid" aria-checked="true">dashboardGrid</div>
+          <div role="menuitemradio" data-value="listView" aria-checked="false">listView</div>
+        </div>`;
+      gearBtn.setAttribute('aria-expanded', 'true');
+    });
+  }
 
   if (addBtn) {
     addBtn.addEventListener('click', () => {

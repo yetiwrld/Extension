@@ -99,11 +99,34 @@ test('a connected tab whose settings control is missing says so instead of looki
   assert.equal(connected.status, 'connected');
   assert.equal(connected.promptFound, true);
   assert.equal(connected.settingsFound, false);
-  assert.match(connected.message, /model\/settings control was not found/);
+  assert.match(connected.message, /no model\/settings control/);
+  assert.match(connected.message, /tab and connector OK/);
 
   const ready = await checkFlowConnection({ chromeApi: fakeChrome() });
   assert.equal(ready.settingsFound, true);
   assert.equal(ready.message, 'Connected to Flow.');
+});
+
+test('the connection line enumerates every missing capability, one by one', async () => {
+  const noComposer = await checkFlowConnection({
+    chromeApi: fakeChrome({ probe: { promptFound: false, isProjectPage: true, settingsFound: false, detectedSettings: null } }),
+  });
+  assert.equal(noComposer.status, 'connected');
+  assert.match(noComposer.message, /no prompt composer/);
+  assert.match(noComposer.message, /no model\/settings control/);
+  assert.equal(noComposer.detectedSettings, null);
+
+  const noProject = await checkFlowConnection({
+    chromeApi: fakeChrome({ probe: { promptFound: false, isProjectPage: false, settingsFound: false } }),
+  });
+  assert.match(noProject.message, /no project open/);
+  assert.match(noProject.message, /no prompt composer/);
+
+  const withChip = await checkFlowConnection({
+    chromeApi: fakeChrome({ probe: { promptFound: true, isProjectPage: true, settingsFound: true, detectedSettings: { mode: null, model: 'Nano Banana 2.1', aspectRatio: null } } }),
+  });
+  assert.equal(withChip.message, 'Connected to Flow.');
+  assert.equal(withChip.detectedSettings.model, 'Nano Banana 2.1', 'the chip text travels to the panel');
 });
 
 test('the bridge reports a closed tab as FLOW_TAB_CLOSED so the queue pauses instead of failing', async () => {
@@ -289,6 +312,35 @@ test('a failed automatic settings read is logged and reported, never a crash in 
     JSON.stringify(logs),
   );
   assert.equal(store.read(STORAGE_KEYS.flowSettings).readAt, null, 'no settings were stored');
+  assert.match(
+    store.read(STORAGE_KEYS.flowSettings).readError,
+    /Could not find the model\/settings control/,
+    'the failure is stored so the panel can show it instead of a bare "Not read yet"',
+  );
+});
+
+test('a manual Read from Flow stores the failure in the settings card and rethrows it to the panel', async () => {
+  const { controller, store } = await createController();
+  const failure = Object.assign(new Error('The Flow settings menu did not open after clicking "Nano Banana 2.1 \u25be".'), {
+    code: 'FLOW_UI_CHANGED',
+  });
+  controller.bridge.readSettings = async () => {
+    throw failure;
+  };
+  await assert.rejects(controller.handle('refreshFlowSettings'), (error) => {
+    assert.equal(error.code, 'FLOW_UI_CHANGED');
+    assert.match(error.message, /did not open after clicking/);
+    return true;
+  });
+  const settings = store.read(STORAGE_KEYS.flowSettings);
+  assert.equal(settings.readAt, null);
+  assert.match(settings.readError, /did not open after clicking/);
+
+  // A successful read clears the stored failure.
+  controller.bridge.readSettings = async () => ({ current: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: null }, options: { mode: ['Image'], model: ['Nano Banana 2.1'], aspectRatio: [] }, strategy: 's' });
+  await controller.handle('refreshFlowSettings');
+  assert.equal(store.read(STORAGE_KEYS.flowSettings).readError, null);
+  assert.equal(store.read(STORAGE_KEYS.flowSettings).current.model, 'Nano Banana 2.1');
 });
 
 test('Read from Flow is refused while the automation runs, so Flow menus are never driven by two callers', async () => {

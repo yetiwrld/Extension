@@ -2,6 +2,7 @@ import { AutomationError, ERROR_CODES } from '../utils/errors.js';
 import { accessibleName, clickElement, clickOutside, normalizeText, pressEscape, waitForValue } from './dom.js';
 import {
   classifySettingOption,
+  findDetectedSettings,
   findOpenPopover,
   findSettingsTrigger,
   findSettingsTriggerWhenReady,
@@ -30,10 +31,25 @@ export const SETTING_KEYS = Object.freeze(['mode', 'model', 'aspectRatio']);
 export async function readFlowSettings(ctx) {
   const prompt = requirePromptBox(ctx.doc);
   const trigger = await requireSettingsTrigger(ctx, prompt);
-  const popover = await openSettingsPopover(ctx, trigger.el);
+  const chip = findDetectedSettings(ctx.doc, prompt.el);
+  const popover = await openSettingsPopover(ctx, trigger.el, prompt.el);
   try {
     const options = readPopoverOptions(popover);
-    return summarize(options, trigger, ctx.doc, prompt.el, trigger.strategy);
+    const result = summarize(options, trigger, ctx.doc, prompt.el, trigger.strategy, chip);
+    // A menu that is not the generation settings menu must never be summarised as
+    // settings: without this check, an unrelated menu's selected option (a view
+    // option like "dashboardGrid") would be reported as Flow's model.
+    const recognized = SETTING_KEYS.filter((key) => (result.options[key] ?? []).length > 0);
+    if (!recognized.length) {
+      const offered = options.map((option) => option.name).filter(Boolean);
+      throw new AutomationError(
+        ERROR_CODES.FLOW_UI_CHANGED,
+        `The menu that opened ("${accessibleName(trigger.el).slice(0, 40)}") is not Flow's generation settings menu. ` +
+          `Its options: ${offered.length ? offered.join(', ') : '(none readable)'}. ` +
+          `The model chip in the composer shows "${chip.model ?? 'unknown'}". Run "Check Flow page" in Settings for the full report.`,
+      );
+    }
+    return result;
   } finally {
     await closePopover(ctx, popover);
   }
@@ -50,14 +66,15 @@ export async function applyFlowSettings(ctx, target) {
 
     const prompt = requirePromptBox(ctx.doc);
     const trigger = await requireSettingsTrigger(ctx, prompt);
-    const popover = await openSettingsPopover(ctx, trigger.el);
+    const chip = findDetectedSettings(ctx.doc, prompt.el);
+    const popover = await openSettingsPopover(ctx, trigger.el, prompt.el);
     let applied = false;
     try {
       const options = readPopoverOptions(popover);
-      const match = options.find((option) => classifySettingOption(option) === key && sameName(option.name, wanted));
+      const match = options.find((option) => classifySettingOption(option, { chipModel: chip.model }) === key && sameName(option.name, wanted));
       if (!match) {
         const available = options
-          .filter((option) => classifySettingOption(option) === key)
+          .filter((option) => classifySettingOption(option, { chipModel: chip.model }) === key)
           .map((option) => option.name);
         throw new AutomationError(
           ERROR_CODES.FLOW_SETTING_FAILED,
@@ -94,15 +111,25 @@ export async function applyFlowSettings(ctx, target) {
   return result;
 }
 
-async function openSettingsPopover(ctx, triggerEl) {
-  const existing = findOpenPopover(ctx.doc);
+async function openSettingsPopover(ctx, triggerEl, promptEl = null) {
+  const existing = findOpenPopover(ctx.doc, { exclude: promptEl });
   if (existing) {
     await closePopover(ctx, existing);
   }
+  const name = accessibleName(triggerEl).slice(0, 40) || '(no accessible name)';
   clickElement(triggerEl);
-  const popover = await waitForValue(() => findOpenPopover(ctx.doc), { timeoutMs: ctx.timings.popoverMs, intervalMs: 80, sleep: ctx.sleep });
+  const popover = await waitForValue(() => findOpenPopover(ctx.doc, { exclude: promptEl }), {
+    timeoutMs: ctx.timings.popoverMs,
+    intervalMs: 80,
+    sleep: ctx.sleep,
+  });
   if (!popover) {
-    throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'The Flow settings menu did not open.');
+    // Say WHICH control was clicked: "did not open" is only actionable with that.
+    throw new AutomationError(
+      ERROR_CODES.FLOW_UI_CHANGED,
+      `The Flow settings menu did not open after clicking "${name}". No dialog, menu or listbox appeared within ${Math.round(ctx.timings.popoverMs / 1000)}s. ` +
+        'The control may not open the settings menu in this Flow layout. Run "Check Flow page" in Settings for the full report.',
+    );
   }
   return popover;
 }
@@ -126,14 +153,18 @@ async function waitForClosed(ctx, popover) {
   });
 }
 
-function summarize(options, trigger, doc, promptEl, strategy) {
+function summarize(options, trigger, doc, promptEl, strategy, chip = { mode: null, model: null, aspectRatio: null }) {
   const current = { mode: null, model: null, aspectRatio: null };
   const list = { mode: [], model: [], aspectRatio: [] };
   for (const option of options) {
-    const key = classifySettingOption(option);
+    const key = classifySettingOption(option, { chipModel: chip.model });
     if (!key) continue;
     if (!list[key].includes(option.name)) list[key].push(option.name);
     if (option.selected && !current[key]) current[key] = option.name;
+  }
+  if (!current.model && chip.model && list.model.includes(chip.model)) {
+    // The chip in the composer shows the active model; the menu just does not mark it.
+    current.model = chip.model;
   }
   if (!current.model) {
     // Flow shows the active model on the trigger button when no option is marked selected.
@@ -141,7 +172,14 @@ function summarize(options, trigger, doc, promptEl, strategy) {
     const match = list.model.find((name) => shown.toLowerCase().includes(name.toLowerCase()));
     if (match) current.model = match;
   }
-  return { current, options: list, strategy: `${strategy}; popover-options=${options.length}` };
+  return {
+    current,
+    options: list,
+    strategy: `${strategy}; popover-options=${options.length}`,
+    // Ground truth from the composer itself, for the report and the panel.
+    chipModel: chip.model ?? null,
+    modelMatchesChip: chip.model ? sameName(current.model ?? '', chip.model) : null,
+  };
 }
 
 /**

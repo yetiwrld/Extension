@@ -35,8 +35,11 @@
     <script src="/dist/content/content-script.js"></script>
     <script type="module">
       import { installFlowFixture } from '/fixture/flow-fixture.js';
-      const variant = location.hash === '#rich' ? 'contenteditable' : 'textarea';
-      const fixture = installFlowFixture(window, { variant: variant });
+      const options = { variant: location.hash === '#rich' ? 'contenteditable' : 'textarea' };
+      for (const flag of ['chipPlain', 'gearMenu', 'chipOpensViewMenu', 'chipDead']) {
+        if (location.hash.includes(flag)) options[flag] = true;
+      }
+      const fixture = installFlowFixture(window, options);
       window.__fixture = fixture;
       window.__generations = [];
       window.__failOn = [];      // 1-based generation numbers that Flow reports as failed

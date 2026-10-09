@@ -26,19 +26,26 @@ export async function checkFlowConnection({ chromeApi = globalThis.chrome, now =
   try {
     const probe = await askTab(chromeApi, tab.id, 'probe');
     const settingsFound = Boolean(probe.settingsFound);
+    // "Connected" means the Flow tab is detected and its content script answers.
+    // What is NOT yet working is said here, so a failed capability is never hidden
+    // behind a green indicator. Whether settings were READ is shown in the settings
+    // card (it is read asynchronously and can fail on its own).
+    const missing = [];
+    if (!probe.isProjectPage) missing.push('no project open');
+    if (!probe.promptFound) missing.push('no prompt composer');
+    if (!settingsFound) missing.push('no model/settings control');
     return {
       status: 'connected',
       tabId: tab.id,
       url: tab.url,
-      message: !probe.promptFound
-        ? 'Connected to Flow. Open a project to find the prompt box.'
-        : !settingsFound
-          ? 'Connected to Flow. The model/settings control was not found — run "Check Flow page" in Settings.'
-          : 'Connected to Flow.',
+      message: missing.length
+        ? `Connected to Flow (tab and connector OK), but ${missing.join(', ')} — run "Check Flow page" in Settings.`
+        : 'Connected to Flow.',
       checkedAt,
       promptFound: Boolean(probe.promptFound),
       settingsFound,
       projectPage: Boolean(probe.isProjectPage),
+      detectedSettings: probe.detectedSettings ?? null,
     };
   } catch (error) {
     const payload = toErrorPayload(error);
@@ -74,5 +81,15 @@ async function askTab(chromeApi, tabId, cmd) {
 }
 
 function notConnected(tabId, url, message, checkedAt) {
-  return { status: 'not_connected', tabId, url, message, checkedAt, promptFound: false, projectPage: false };
+  return {
+    status: 'not_connected',
+    tabId,
+    url,
+    message,
+    checkedAt,
+    promptFound: false,
+    settingsFound: false,
+    projectPage: false,
+    detectedSettings: null,
+  };
 }

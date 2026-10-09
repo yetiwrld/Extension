@@ -85,6 +85,65 @@ test('the Flow settings section offers only what Flow exposed', () => {
   assert.match(html, /Nano Banana Pro/);
 });
 
+test('the settings card distinguishes Not read yet, Unknown, Not offered and a read failure', () => {
+  const base = { connection: { status: 'connected' }, automation: { phase: 'idle' } };
+  const ui = { busy: false };
+
+  const neverRead = R.renderFlowSettings(
+    { ...base, flowSettings: { current: { mode: null, model: null, aspectRatio: null }, options: { mode: [], model: [], aspectRatio: [] }, readAt: null, readError: null } },
+    ui,
+  );
+  assert.match(neverRead, /Not read yet/);
+  assert.doesNotMatch(neverRead, /Read failed/);
+
+  const readButUnknown = R.renderFlowSettings(
+    { ...base, flowSettings: { current: { mode: null, model: null, aspectRatio: null }, options: { mode: [], model: [], aspectRatio: [] }, readAt: 1, readError: null } },
+    ui,
+  );
+  assert.match(readButUnknown, /Last read/);
+  const selects = readButUnknown.match(/<select data-setting="(\w+)" disabled[^>]*><option value="">([^<]*)<\/option>/g) ?? [];
+  const emptyValue = (key) => selects.find((line) => line.includes(`data-setting="${key}"`))?.match(/<option value="">([^<]*)<\/option>/)?.[1];
+  assert.equal(emptyValue('mode'), 'Unknown', 'mode was read but Flow offered no mode options: unknown, not a guess');
+  assert.equal(emptyValue('model'), 'Unknown');
+  assert.equal(emptyValue('aspectRatio'), 'Not offered in this mode', 'the ratio is reported as not exposed, not as unknown');
+
+  const failed = R.renderFlowSettings(
+    {
+      ...base,
+      flowSettings: {
+        current: { mode: null, model: null, aspectRatio: null },
+        options: { mode: [], model: [], aspectRatio: [] },
+        readAt: null,
+        readError: 'The Flow settings menu did not open after clicking "Nano Banana 2.1 ▾".',
+      },
+    },
+    ui,
+  );
+  assert.match(failed, /Read failed: The Flow settings menu did not open after clicking/);
+  assert.match(failed, /Not read yet/);
+});
+
+test('the settings card shows the model chip the composer actually displays', () => {
+  const html = R.renderFlowSettings(
+    {
+      connection: { status: 'connected', detectedSettings: { mode: null, model: 'Nano Banana 2.1', aspectRatio: null } },
+      automation: { phase: 'idle' },
+      flowSettings: { current: { mode: null, model: null, aspectRatio: null }, options: { mode: [], model: [], aspectRatio: [] }, readAt: null, readError: null },
+    },
+    { busy: false },
+  );
+  assert.match(html, /Flow's composer shows: model Nano Banana 2\.1/);
+  const without = R.renderFlowSettings(
+    {
+      connection: { status: 'connected' },
+      automation: { phase: 'idle' },
+      flowSettings: { current: {}, options: {}, readAt: null, readError: null },
+    },
+    { busy: false },
+  );
+  assert.doesNotMatch(without, /Flow's composer shows:/);
+});
+
 test('ambiguous references render a chooser with the candidate files', () => {
   const project = buildProject('[Scene 1]\nShot.\nReference images: Aron', {
     library: [

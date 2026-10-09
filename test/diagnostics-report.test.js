@@ -133,6 +133,75 @@ test('the report carries exceptions with trimmed stack traces', () => {
   assert.match(text, /at read \(x\.js:1\)/);
 });
 
+test('the report names the model chip and the settings-read attempt, success or failure', () => {
+  const ok = formatDiagnosticsReport({
+    ...REPORT,
+    modelChip: 'Nano Banana 2.1',
+    settingsRead: {
+      attempted: true,
+      ok: true,
+      current: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9' },
+      options: { mode: ['Image', 'Video'], model: ['Nano Banana 2.1', 'Veo 3.1'], aspectRatio: ['16:9', '9:16'] },
+      strategy: 'settings-trigger-model-name; popover-options=7',
+      chipModel: 'Nano Banana 2.1',
+      modelMatchesChip: true,
+    },
+  });
+  assert.match(ok, /Model chip in the composer: "Nano Banana 2\.1"/);
+  assert.match(ok, /Settings read attempt:/);
+  assert.match(ok, / - ok \(settings-trigger-model-name; popover-options=7\): mode=Image, model=Nano Banana 2\.1, aspectRatio=16:9/);
+  assert.match(ok, / - model options: Nano Banana 2\.1, Veo 3\.1/);
+  assert.match(ok, / - composer chip shows "Nano Banana 2\.1"/);
+
+  const failed = formatDiagnosticsReport({
+    ...REPORT,
+    modelChip: 'Nano Banana 2.1',
+    settingsRead: {
+      attempted: true,
+      ok: false,
+      error: 'The Flow settings menu did not open after clicking "Nano Banana 2.1 \u25be".',
+      code: 'FLOW_UI_CHANGED',
+    },
+  });
+  assert.match(failed, / - FAILED \(FLOW_UI_CHANGED\): The Flow settings menu did not open after clicking/);
+
+  const mismatch = formatDiagnosticsReport({
+    ...REPORT,
+    settingsRead: {
+      attempted: true,
+      ok: true,
+      current: { mode: 'Image', model: 'dashboardGrid', aspectRatio: null },
+      options: { mode: [], model: [], aspectRatio: [] },
+      chipModel: 'Nano Banana 2.1',
+      modelMatchesChip: false,
+    },
+  });
+  assert.match(mismatch, /composer chip shows "Nano Banana 2\.1" — DIFFERS from the menu/);
+});
+
+test('the report never contains prompt text, page text or account data', () => {
+  // The composer's placeholder is a control label (safe); the user's TYPED prompt is
+  // never part of the report data, and the formatter must not echo it.
+  const text = formatDiagnosticsReport({
+    ...REPORT,
+    settingsRead: {
+      attempted: true,
+      ok: true,
+      current: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9' },
+      options: { mode: ['Image', 'Video'], model: ['Nano Banana 2.1'], aspectRatio: ['16:9'] },
+      chipModel: 'Nano Banana 2.1',
+      modelMatchesChip: true,
+    },
+    promptControls: [
+      { tag: 'textarea', role: 'textbox', name: 'What do you want to create?', title: '', popup: '', disabled: false, purpose: 'prompt' },
+    ],
+  });
+  assert.doesNotMatch(text, /my secret prompt about a cat/, 'a typed prompt value is never echoed');
+  assert.doesNotMatch(text, /user@gmail\.com/, 'no account data');
+  assert.doesNotMatch(text, /cookie|token|authorization/i, 'no credentials');
+  assert.match(text, /purpose=prompt "What do you want to create\?"/, 'the placeholder label is the control summary');
+});
+
 test('the report says why the composer was selected when one was', () => {
   const text = formatDiagnosticsReport({
     ...REPORT,

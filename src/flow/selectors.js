@@ -61,6 +61,23 @@ const POPOVER_SELECTOR = [
   '[data-radix-popper-content-wrapper]',
   '[data-state="open"][role]',
 ].join(',');
+/**
+ * What a generation-settings menu can look like. Detection is deliberately wider
+ * than POPOVER_SELECTOR: a menu surface without ARIA roles (a custom popover, a
+ * Material menu, a shadow-DOM menu) must still be recognised, or a menu that DID
+ * open is reported as "did not open".
+ */
+const MENU_SELECTOR = [
+  '[role="menu"]',
+  '[role="listbox"]',
+  '[role="dialog"]',
+  '[aria-modal="true"]',
+  '[popover]',
+  '[data-radix-popper-content-wrapper]',
+  '[data-state="open"]',
+  '[data-radix-menu-content]',
+  '[data-mdc-menu-surface]',
+].join(',');
 const OPTION_SELECTOR = [
   '[role="option"]',
   '[role="menuitemradio"]',
@@ -550,28 +567,120 @@ function collectHosts(scope, minRank) {
   return out;
 }
 
+const INTERACTIVE_SELECTOR = 'button, a, [role="button"], [role="combobox"], [role="menuitem"], [aria-haspopup], [aria-expanded], [tabindex]';
+
+/** An element's own text: its direct text nodes only, never its descendants'. */
+function ownText(el) {
+  let text = '';
+  for (const node of el.childNodes) {
+    if (node.nodeType === 3) text += node.nodeValue;
+  }
+  return normalizeText(text);
+}
+
 /**
- * The control that opens the settings popover (model / mode / aspect ratio).
- * The prompt region is searched first. If it holds no candidate, the whole document is
- * searched with stronger requirements only: the control can sit just outside the detected
- * region, but a weak match anywhere on the page (a bare "Video" tab, say) must never be
- * clicked blindly, so the fallback demands a model-like name or a declared popup.
- * When several controls match equally well, the first is used and `ambiguous` says so.
+ * A control's label without the textContent fallback: aria-label, aria-labelledby,
+ * title, then the element's OWN text. The fallback matters: a container wrapping a
+ * chip has the chip's text in its textContent, and must not be mistaken for the
+ * chip itself.
+ */
+function controlLabel(el) {
+  const aria = el.getAttribute('aria-label');
+  if (aria) return normalizeText(aria);
+  const labelledBy = el.getAttribute('aria-labelledby');
+  if (labelledBy) {
+    const text = labelledBy
+      .split(/\s+/)
+      .map((id) => el.ownerDocument.getElementById(id)?.textContent ?? '')
+      .join(' ');
+    if (normalizeText(text)) return normalizeText(text);
+  }
+  const title = el.getAttribute('title');
+  if (title) return normalizeText(title);
+  return ownText(el);
+}
+
+/**
+ * Controls that DISPLAY a model name ("Nano Banana 2.1", "Veo 3.1", …). The model
+ * chip in the composer is the control that opens the generation settings menu, but
+ * it is often a plain element with no button semantics at all, so neither
+ * CONTROL_SELECTOR nor TRIGGER_SELECTOR sees it. Name is the verified signal.
+ *
+ * `interactiveOnly` restricts the document-wide search: a model name in a project
+ * card title must never be clicked, while the chip inside the composer (always
+ * interactive in practice) is found even as a plain element.
+ */
+export function collectModelNamedControls(scope, { interactiveOnly = false, limit = 8, scanCap = 2500 } = {}) {
+  const out = [];
+  const seen = new Set();
+  const consider = (el) => {
+    if (seen.has(el) || out.length >= limit) return;
+    seen.add(el);
+    if (!isVisible(el)) return;
+    // Own-text label, not textContent: a container wrapping the chip must not match.
+    const name = controlLabel(el);
+    if (!MODEL_NAME.test(name)) return;
+    if (interactiveOnly && !el.matches(INTERACTIVE_SELECTOR) && !el.tagName.includes('-')) return;
+    out.push({ el, rank: 3, name });
+  };
+  // One bounded walk; custom-element hosts are descended into one shadow level.
+  const walk = (root) => {
+    const walker = (root.ownerDocument ?? root).createTreeWalker(root, 1);
+    let scanned = 0;
+    let current = walker.nextNode();
+    while (current && scanned < scanCap && out.length < limit) {
+      scanned += 1;
+      consider(current);
+      if (current.tagName.includes('-') && current.shadowRoot) {
+        for (const inner of current.shadowRoot.querySelectorAll('*')) consider(inner);
+      }
+      current = walker.nextNode();
+    }
+  };
+  walk(scope);
+  return out;
+}
+
+/**
+ * The control that opens the generation settings menu (Mode / Model / Aspect ratio).
+ *
+ * The verified control is the model chip in the prompt composer: Google's own help
+ * says to "click the model name" in the prompt box, and that menu holds all three
+ * settings. The chip is often a plain element with no button semantics, so besides
+ * the semantic controls it is found BY ITS MODEL NAME (collectModelNamedControls).
+ *
+ * Outside the prompt region the search accepts ONLY model-named controls: a generic
+ * popup elsewhere on the page (a toolbar gear, a view switcher) is not verified to
+ * open the generation settings, and clicking one reads a different menu — which is
+ * how an unrelated option can be mistaken for the model. Weak in-region signals
+ * (an aspect-ratio chip) are still accepted when nothing better exists; the menu
+ * validation in settings.js rejects a menu that is not the generation settings.
  */
 export function findSettingsTrigger(doc, promptEl) {
   const region = findPromptRegion(promptEl) ?? doc;
-  const collect = (scope, minRank) => [
+  const inRegionList = [
     // Shadow-aware: a custom-element toolbar's trigger is invisible to a plain querySelectorAll.
-    ...visibleControlsWithin(scope).map((el) => ({ el, rank: settingsTriggerRank(el) })),
-    ...collectHosts(scope, minRank),
-  ].filter((item) => item.rank >= minRank);
-  const inRegionList = collect(region, 1);
-  const inRegion = bestTrigger(inRegionList);
-  const found = inRegion ?? bestTrigger(collect(doc, 2));
+    ...visibleControlsWithin(region).map((el) => ({ el, rank: settingsTriggerRank(el) })),
+    ...collectHosts(region, 1),
+    ...collectModelNamedControls(region),
+  ].filter((item) => item.rank >= 1);
+  // Document-wide fallback: model-named controls only, and only interactive ones —
+  // a model name in a project-card title must never be clicked.
+  const docList = collectModelNamedControls(doc, { interactiveOnly: true });
+  // One element can be collected twice (semantic control AND model-named): dedupe by element.
+  const seen = new Set();
+  const all = [...inRegionList, ...docList].filter((item) => {
+    if (seen.has(item.el)) return false;
+    seen.add(item.el);
+    return true;
+  });
+  const found = bestTrigger(all);
   if (!found) return null;
+  const inRegion = inRegionList.some((item) => item.el === found.el);
   const opensPopup = found.el.hasAttribute('aria-haspopup') || found.el.hasAttribute('aria-expanded');
   const base = opensPopup ? 'settings-trigger-aria-haspopup' : 'settings-trigger-by-name';
-  return { el: found.el, strategy: inRegion ? base : `${base}-in-document`, ambiguous: isAmbiguous(inRegionList) };
+  const named = found.name && !opensPopup ? 'settings-trigger-model-name' : base;
+  return { el: found.el, strategy: inRegion ? named : `${named}-in-document`, ambiguous: isAmbiguous(all) };
 }
 
 /** Find the settings trigger, waiting a bounded time for Flow's asynchronous UI to render it. */
@@ -605,7 +714,9 @@ export function findDetectedSettings(doc, promptEl) {
   let model = null;
   let aspectRatio = null;
   let mode = null;
-  for (const el of visibleControlsWithin(region)) {
+  // The model chip may be a plain element (no button semantics): collect it by name too.
+  const controls = [...visibleControlsWithin(region), ...collectModelNamedControls(region).map((item) => item.el)];
+  for (const el of controls) {
     const name = accessibleName(el);
     if (!name) continue;
     if (!model && MODEL_NAME.test(name)) {
@@ -641,6 +752,15 @@ export function listPromptControls(doc, promptEl, limit = 10) {
     });
   };
   for (const el of visibleControlsWithin(region)) push(el);
+  // The model chip (and any mode/aspect chip) may be a plain element with no
+  // semantics: list it by name so the report shows the real settings controls.
+  if (out.length < limit) {
+    const named = [
+      ...collectModelNamedControls(region, { limit: limit - out.length }),
+      ...collectNamedControlsBy(region, [ASPECT_RATIO_TEXT, MODE_NAME], limit - out.length),
+    ];
+    for (const item of named) push(item.el);
+  }
   // Custom-element hosts (shadow DOM) are not matched by CONTROL_SELECTOR; list them too.
   if (out.length < limit) {
     for (const el of region.querySelectorAll('*')) {
@@ -651,10 +771,69 @@ export function listPromptControls(doc, promptEl, limit = 10) {
   return out;
 }
 
-/** The popover that appeared most recently. */
-export function findOpenPopover(doc) {
-  const popovers = queryAllVisible(doc, POPOVER_SELECTOR);
-  return popovers.length ? popovers[popovers.length - 1] : null;
+/** Visible elements whose accessible name matches any of `patterns` (bounded walk). */
+function collectNamedControlsBy(scope, patterns, limit) {
+  const out = [];
+  const seen = new Set();
+  const walker = (scope.ownerDocument ?? scope).createTreeWalker(scope, 1);
+  let scanned = 0;
+  let current = walker.nextNode();
+  while (current && scanned < 1500 && out.length < limit) {
+    scanned += 1;
+    if (seen.has(current)) {
+      current = walker.nextNode();
+      continue;
+    }
+    seen.add(current);
+    if (!isVisible(current)) {
+      current = walker.nextNode();
+      continue;
+    }
+    const name = accessibleName(current);
+    if (name && patterns.some((pattern) => pattern.test(name))) out.push({ el: current, rank: 1, name });
+    current = walker.nextNode();
+  }
+  return out;
+}
+
+/** Shadow roots reachable from `doc`, one level deep, bounded (menus inside custom elements). */
+function collectMenuScopes(doc) {
+  const scopes = [doc];
+  const walker = doc.createTreeWalker(doc, 1);
+  let scanned = 0;
+  let current = walker.nextNode();
+  while (current && scanned < 1500 && scopes.length < 8) {
+    scanned += 1;
+    if (current.tagName.includes('-') && current.shadowRoot) scopes.push(current.shadowRoot);
+    current = walker.nextNode();
+  }
+  return scopes;
+}
+
+/**
+ * The menu that is open now. Detection is deliberately wider than POPOVER_SELECTOR:
+ * a menu surface without ARIA roles must still be found, or a menu that DID open is
+ * reported as "did not open". Matches that contain the composer are not menus (the
+ * composer is not inside its own menu), and a real menu/listbox beats a dialog or a
+ * bare open-state wrapper when several match.
+ *
+ * @param {Document} doc
+ * @param {{exclude?: Element|null}} [options] `exclude`: the composer; matches containing it are skipped.
+ */
+export function findOpenPopover(doc, { exclude = null } = {}) {
+  const menus = [];
+  const others = [];
+  for (const scope of collectMenuScopes(doc)) {
+    for (const el of scope.querySelectorAll(MENU_SELECTOR)) {
+      if (!isVisible(el)) continue;
+      if (exclude && (el === exclude || el.contains(exclude))) continue;
+      const role = el.getAttribute('role');
+      if (role === 'menu' || role === 'listbox') menus.push(el);
+      else others.push(el);
+    }
+  }
+  const found = menus.length ? menus[menus.length - 1] : others[others.length - 1];
+  return found ?? null;
 }
 
 /** Options inside a popover, with the heading that introduced each group (Mode, Model, Aspect ratio...). */
@@ -704,16 +883,26 @@ export function isSelected(node) {
 }
 
 /** Classify a settings option by its group heading first, then by shape. */
-export function classifySettingOption(option) {
+/**
+ * Classify a settings option by its group heading first, then by shape. An option
+ * with no positive evidence is UNKNOWN (null) — never guessed as a model: the old
+ * default classified any unrecognised option (a view option like "dashboardGrid"
+ * in an unrelated menu) as the model, and the panel displayed it as Flow's model.
+ *
+ * `chipModel` is the model the composer's own chip displays. An option showing the
+ * same name is the model even when the menu has no "Model" heading — that is how a
+ * heading-less model list is still recognised without hardcoding model names.
+ */
+export function classifySettingOption(option, { chipModel = null } = {}) {
   const group = (option.group || '').toLowerCase();
   const name = option.name;
   if (/aspect|ratio/.test(group) || ASPECT_RATIO_TEXT.test(name)) return 'aspectRatio';
   if (/^mode$/.test(group) || /^(image|video)$/i.test(name)) return 'mode';
   if (/model/.test(group)) return 'model';
+  if (chipModel && normalizeText(name).toLowerCase() === normalizeText(chipModel).toLowerCase()) return 'model';
   if (/output|count|length|duration|quantity/.test(group)) return null;
   if (/^\d+$/.test(name) || /^x\d+$/i.test(name)) return null;
-  if (ASPECT_RATIO_TEXT.test(name)) return 'aspectRatio';
-  return 'model';
+  return null;
 }
 
 /** Agent switch in the prompt box. Returns { el, on } or null. */
