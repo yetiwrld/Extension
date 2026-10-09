@@ -1,4 +1,4 @@
-import { attachConnector, isFlowUrl, isNoReceiverError, RELOAD_TAB_MESSAGE } from './flow-bridge.js';
+import { attachConnector, isFlowUrl, isNoReceiverError, RELOAD_TAB_MESSAGE, withDetails } from './flow-bridge.js';
 import { AutomationError, ERROR_CODES, toErrorPayload } from '../utils/errors.js';
 import { withTimeout } from '../utils/async.js';
 import { FLOW_TARGET } from '../shared/protocol.js';
@@ -52,8 +52,8 @@ async function askTab(chromeApi, tabId, cmd) {
     await attachConnector(chromeApi, tabId);
     try {
       reply = await withTimeout(send(), 4000, 'Flow did not respond after attaching.');
-    } catch {
-      throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, RELOAD_TAB_MESSAGE);
+    } catch (retryError) {
+      throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, withDetails(RELOAD_TAB_MESSAGE, retryError));
     }
   }
   if (!reply?.ok) {

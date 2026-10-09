@@ -13,22 +13,44 @@ export const FLOW_CONTENT_SCRIPT = 'content/content-script.js';
 /** Shown when the connector cannot be reached even after it has been injected. */
 export const RELOAD_TAB_MESSAGE = 'Could not connect to this Flow tab. Reload the Flow tab (press F5) and try again.';
 
-const NO_RECEIVER = /receiving end does not exist|could not establish connection|message port closed/i;
+/** Shown when Chrome refuses to inject the connector into the tab. */
+export const INJECT_FAILED_MESSAGE = 'Chrome would not load the Flow connector into this tab. Reload the Flow tab (press F5) and try again.';
 
-/** True when Chrome reports that no content script is listening in the tab. */
+// Chrome reports these when no content script is listening. Nothing was delivered, so a retry is safe.
+const NOT_DELIVERED = /receiving end does not exist|could not establish connection/i;
+// Chrome reports this when the connector was reached but its reply never arrived. The command may have run.
+const REPLY_LOST = /message port closed/i;
+
+const messageOf = (error) => String(error?.message ?? error ?? '');
+
+/** True when no content script was listening, so the command was not delivered. */
+export function isNotDeliveredError(error) {
+  return NOT_DELIVERED.test(messageOf(error));
+}
+
+/**
+ * True when a read-only check may retry after injecting the connector: either nothing was listening,
+ * or the reply was lost. Commands never retry on a lost reply, because the command may already have run.
+ */
 export function isNoReceiverError(error) {
-  return NO_RECEIVER.test(String(error?.message ?? error));
+  return NOT_DELIVERED.test(messageOf(error)) || REPLY_LOST.test(messageOf(error));
+}
+
+/** Append Chrome's own reason, so a failure can be read from the panel instead of guessed at. */
+export function withDetails(message, error) {
+  const reason = messageOf(error).trim();
+  return reason ? `${message} Details: ${reason}` : message;
 }
 
 /**
  * Inject the Flow connector into the top frame of a tab. Used when the tab was open before the
- * extension was loaded or reloaded. Throws a user-facing error if Chrome refuses.
+ * extension was loaded or reloaded. Throws a user-facing error, with Chrome's reason, if Chrome refuses.
  */
 export async function attachConnector(chromeApi, tabId) {
   try {
     await chromeApi.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: [FLOW_CONTENT_SCRIPT] });
-  } catch {
-    throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, RELOAD_TAB_MESSAGE);
+  } catch (error) {
+    throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, withDetails(INJECT_FAILED_MESSAGE, error));
   }
 }
 
@@ -68,21 +90,34 @@ export function createFlowBridge({ getTabId, chromeApi = globalThis.chrome, time
     return tab;
   }
 
+  /** A reply that never arrived. If the reply was lost, the command may already have run, so say so. */
+  function noReplyError(cmd, error) {
+    if (REPLY_LOST.test(messageOf(error))) {
+      return new AutomationError(
+        ERROR_CODES.FLOW_NO_RESPONSE,
+        `The connection to Flow closed before it replied to "${cmd}". The command may already have run in Flow, so check Flow before retrying.`,
+      );
+    }
+    return new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, `Flow did not respond (${messageOf(error) || 'no response'}).`);
+  }
+
   async function deliver(tabId, cmd, payload) {
     const message = { target: FLOW_TARGET, cmd, payload };
     try {
       return await chromeApi.tabs.sendMessage(tabId, message, { frameId: 0 });
     } catch (error) {
-      if (!isNoReceiverError(error)) {
-        throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, `Flow did not respond (${error?.message ?? 'no response'}).`);
-      }
+      if (!isNotDeliveredError(error)) throw noReplyError(cmd, error);
     }
-    // The page was open before the extension was loaded or reloaded: attach, then retry once.
+    // Nothing was listening, so the command was not delivered. The page was open before the extension
+    // was loaded or reloaded: attach the connector, then send the command once more.
     await attachConnector(chromeApi, tabId);
     try {
       return await chromeApi.tabs.sendMessage(tabId, message, { frameId: 0 });
-    } catch {
-      throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, RELOAD_TAB_MESSAGE);
+    } catch (error) {
+      if (isNotDeliveredError(error)) {
+        throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, withDetails(RELOAD_TAB_MESSAGE, error));
+      }
+      throw noReplyError(cmd, error);
     }
   }
 
