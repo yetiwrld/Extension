@@ -662,11 +662,30 @@ export class AutomationRunner {
       );
     }
 
-    // Clear again right before attaching: a resumed scene must carry exactly its own references.
+    // 1) Flow's PROJECT LIBRARY first. Flow's uploader is an OS file dialog that no
+    // extension can fill, and synthetic drops arrive late and duplicate. If the
+    // reference files are already in the project, Flow's own "Use from project"
+    // picker attaches them with no upload at all — matched by filename, never by
+    // position, and never when a name is ambiguous.
     const cleared = await this.flow.clearReferences();
     if ((cleared?.remaining ?? 0) > 0) {
       throw new AutomationError(ERROR_CODES.REFERENCE_CLEAR_FAILED, `Could not remove ${pluralize(cleared.remaining, 'reference')} before uploading.`);
     }
+    let fromProject = null;
+    try {
+      fromProject = await this.flow.attachFromProject(payloads.map((item) => item.name));
+    } catch (error) {
+      await this.log('warn', `Scene ${scene.numberLabel}: the project library could not be used (${error.message}).`, scene.id);
+    }
+    if ((fromProject?.attached ?? 0) >= payloads.length) {
+      await this.log('info', `Scene ${scene.numberLabel}: used ${fromProject.picked.join(', ')} from the Flow project (no upload needed).`, scene.id);
+      return;
+    }
+    if (fromProject?.picked?.length) {
+      await this.log('info', `Scene ${scene.numberLabel}: took ${fromProject.picked.join(', ')} from the project; the rest still need uploading.`, scene.id);
+    }
+
+    // 2) Upload the remainder the hard way (file input, drop, paste).
     let result = null;
     let uploadError = null;
     try {
@@ -706,8 +725,14 @@ export class AutomationRunner {
     const detail = uploadError ? ` ${uploadError.message}` : ` Flow confirmed ${attached} of ${pluralize(payloads.length, 'reference file')}.`;
     throw new AutomationError(
       ERROR_CODES.REFERENCE_MANUAL_REQUIRED,
-      `Flow did not accept ${names} from the extension for Scene ${scene.numberLabel}.${detail} ` +
-        'Attach the file(s) in Flow yourself (Add ingredients), then press Resume to continue this scene.',
+      `Flow did not accept ${names} from the extension for Scene ${scene.numberLabel}.${detail}` +
+        (fromProject?.reason ? ` The project library could not be used: ${fromProject.reason}.` : '') +
+        (fromProject?.missing?.length ? ` Not found in the project: ${fromProject.missing.join(', ')}.` : '') +
+        (fromProject?.ambiguous?.length
+          ? ` Ambiguous in the project: ${fromProject.ambiguous.map((entry) => `${entry.name} -> ${entry.matches.join(' / ')}`).join('; ')}.`
+          : '') +
+        ' Upload the file(s) into this Flow project once (then the extension can reuse them by name), ' +
+        'or attach them to the prompt yourself, then press Resume to continue this scene.',
     );
   }
 

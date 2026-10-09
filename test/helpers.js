@@ -168,6 +168,27 @@ export function scriptedFlow(script = {}) {
         notOffered: script.notOffered ?? [],
       };
     },
+    /**
+     * Flow's "Use from project" picker. `script.projectLibrary` lists the names the
+     * project already holds; without it the scripted page has no library at all,
+     * which is the behaviour every pre-existing test expects.
+     */
+    async attachFromProject(names) {
+      state.calls.push('attachFromProject');
+      const library = script.projectLibrary ?? null;
+      if (!library) {
+        return { attached: state.attached.length, picked: [], missing: [...names], ambiguous: [], available: [], reason: 'no project library on this page' };
+      }
+      const picked = [];
+      const missing = [];
+      for (const name of names) {
+        if (library.includes(name)) {
+          state.attached.push(name);
+          picked.push(name);
+        } else missing.push(name);
+      }
+      return { attached: state.attached.length, picked, missing, ambiguous: [], available: [...library], reason: null };
+    },
     async countReferences() {
       return { attached: state.attached.length, promptFound: true };
     },

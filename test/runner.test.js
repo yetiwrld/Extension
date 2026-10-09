@@ -458,7 +458,7 @@ test('a page that will not take files pauses the scene for a manual attach inste
   assert.equal(automation.phase, 'paused');
   assert.equal(automation.decision.type, 'manual-reference');
   assert.deepEqual(automation.decision.actions, ['resume', 'skip', 'stop']);
-  assert.match(automation.decision.message, /Attach the file\(s\) in Flow yourself/);
+  assert.match(automation.decision.message, /attach them to the prompt yourself/);
   assert.equal(flow.state.submits.length, 0, 'nothing was generated without its references');
 });
 
@@ -495,4 +495,17 @@ test('a scene is not failed because Flow offers no Mode control in the active mo
     logs.some((entry) => entry.level === 'warn' && /offers no Mode control/i.test(entry.message)),
     'the unavailable control is warned about, not hidden',
   );
+});
+
+test('references already in the Flow project are reused by name, with no upload at all', async () => {
+  // Flow's uploader is an OS file dialog the extension cannot fill. When the files
+  // are already in the project, "Use from project" attaches them by filename.
+  const { runner, store, flow, logs } = await createRunner({
+    flowScript: { projectLibrary: ['Aron.png', 'Laboratory.png'], uploadFails: true },
+  });
+  await runner.start({ tabId: 1 });
+  await runner.whenIdle();
+  assert.equal(automationOf(store).phase, 'completed');
+  assert.ok(!flow.state.calls.includes('attach'), 'no upload was attempted');
+  assert.ok(logs.some((entry) => /from the Flow project/.test(entry.message)), 'the project route is reported');
 });

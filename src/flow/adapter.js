@@ -4,6 +4,7 @@ import { FLOW_COMMANDS } from '../shared/protocol.js';
 import { applyFlowSettings, readFlowSettings } from './settings.js';
 import { insertPrompt } from './prompt.js';
 import { attachReferences, clearReferences, countAttachedReferences, probeDropAcceptance } from './references.js';
+import { attachFromProject } from './project-library.js';
 import { generationStatus as readGenerationStatus, snapshotOutputs as takeOutputSnapshot } from './outputs.js';
 import {
   candidateSummaries,
@@ -322,6 +323,10 @@ export function createFlowAdapter(options = {}) {
 
     async clearReferences() {
       return clearReferences(ctx);
+    },
+
+    async attachFromProject(names) {
+      return attachFromProject(ctx, names);
     },
 
     async attachReferences(payloads) {

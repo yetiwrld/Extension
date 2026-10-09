@@ -66,6 +66,11 @@ export async function attachReferences(ctx, payloads) {
   if (!payloads.length) return { attached: 0, expected: 0 };
   const prompt = requirePromptBox(ctx.doc);
   const baseline = countAttachedReferences(ctx.doc, prompt.el);
+  // Already satisfied (the project picker attached them, or a slow earlier attempt
+  // finally landed): attaching again is what produced duplicate ingredients.
+  if (baseline >= payloads.length) {
+    return { attached: baseline, expected: payloads.length, strategy: 'already attached', tried: ['already attached: Flow shows the references'] };
+  }
   const tried = [];
 
   // Flow's "Upload" item raises the OPERATING SYSTEM file dialog, which no
@@ -82,7 +87,16 @@ export async function attachReferences(ctx, payloads) {
   // The OS dialog is never opened on purpose.
   // A technique that does nothing must not cost the full upload budget: each one is
   // probed briefly, and only a technique Flow reacts to is given the long wait.
+  const enough = () => countAttachedReferences(ctx.doc, prompt.el) - baseline >= payloads.length;
   const attempt = async (label, run, { timeoutMs = PROBE_TIMEOUT_MS } = {}) => {
+    // Measured live: a drop Flow accepts can take far longer than the probe window
+    // to show its chip. Every later technique then lands too, and the same file is
+    // attached three or four times. So once Flow shows enough chips, STOP — no
+    // further technique is tried, whichever one eventually did the work.
+    if (enough()) {
+      tried.push(`${label}: skipped (Flow already shows the references)`);
+      return { ok: true, attached: countAttachedReferences(ctx.doc, prompt.el) - baseline };
+    }
     const before = countAttachedReferences(ctx.doc, prompt.el);
     let error = null;
     try {
@@ -204,6 +218,15 @@ export async function attachReferences(ctx, payloads) {
   const pasted = await attempt('paste into the prompt', () => pasteFiles(prompt.el, payloads));
   attached = pasted.attached;
   if (pasted.ok) return { attached, expected: payloads.length, strategy: 'paste', tried };
+
+  // Nothing confirmed yet: give Flow a last LONG window before concluding. An upload
+  // it accepted slowly must be found here rather than by a retry that uploads again.
+  const late = await waitForValue(() => (enough() ? countAttachedReferences(ctx.doc, prompt.el) - baseline : null), {
+    timeoutMs: ATTACH_TIMEOUT_MS,
+    intervalMs: 300,
+    sleep: ctx.sleep,
+  });
+  if (late) return { attached: late, expected: payloads.length, strategy: 'accepted late (drop or paste)', tried };
 
   const seen = inspectFileInputs(ctx.doc);
   const inputNote = seen.length

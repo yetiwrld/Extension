@@ -25,6 +25,7 @@ export const FLOW_PORT_METHODS = Object.freeze([
   'readSettings',
   'applySettings',
   'countReferences',
+  'attachFromProject',
   'clearReferences',
   'attachReferences',
   'insertPrompt',
