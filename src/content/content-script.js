@@ -34,9 +34,18 @@ if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
         return handleFlowCommand(adapter, message.cmd, message.payload);
       })
       .catch((error) => ({ ok: false, error: toErrorPayload(error) }))
-      .then(sendResponse)
-      .catch(() => {
-        // The channel closed before the reply. The service worker times out and reports it.
+      .then((reply) => {
+        try {
+          sendResponse(reply);
+        } catch (error) {
+          // The reply could not be sent, for example because it could not be serialised. Send the
+          // reason instead, so the service worker is not left waiting for a reply that never comes.
+          sendResponse({ ok: false, error: toErrorPayload(error) });
+        }
+      })
+      .catch((error) => {
+        // Not even the error reply could be sent, so the channel is gone. Leave a trace for debugging.
+        console.error('[Flow Scene Queue] Could not send the reply to', message.cmd, error);
       });
     return true;
   };

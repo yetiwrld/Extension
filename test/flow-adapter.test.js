@@ -210,7 +210,7 @@ test('an error that was already on screen before the scene is not reported again
 test('diagnose lists each check with a plain-language result', async () => {
   const report = await current.adapter.diagnose();
   const labels = report.checks.map((item) => item.label);
-  assert.deepEqual(labels, ['Flow page', 'Project open', 'Prompt box', 'Generate button', 'Settings control', 'Agent mode']);
+  assert.deepEqual(labels, ['Flow page', 'Project open', 'Prompt box', 'Generate button', 'Settings control', 'Agent mode', 'Page checks']);
   assert.ok(report.checks.every((item) => typeof item.detail === 'string' && item.detail.length > 0));
   assert.equal(report.checks.find((item) => item.label === 'Prompt box').ok, true);
 });

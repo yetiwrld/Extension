@@ -24,7 +24,7 @@ import { accessibleName, clickElement, normalizeText } from './dom.js';
 
 export const ADAPTER_VERSION = '1.0.0';
 
-const DEFAULT_TIMINGS = Object.freeze({
+export const DEFAULT_TIMINGS = Object.freeze({
   settleMs: 350,
   popoverMs: 2500,
 });
@@ -52,10 +52,20 @@ export function createFlowAdapter(options = {}) {
 
     /** Snapshot of what this page offers. Never throws for missing controls; reports them instead. */
     async probe() {
-      const prompt = findPromptBox(doc);
-      const generate = prompt ? findGenerateButton(doc, prompt.el) : findGenerateButton(doc, null);
-      const trigger = prompt ? findSettingsTrigger(doc, prompt.el) : null;
-      const agent = prompt ? findAgentToggle(doc, prompt.el) : null;
+      // Each lookup is guarded: one unexpected element must not hide the status of the whole page.
+      const issues = [];
+      const guarded = (label, read, fallback = null) => {
+        try {
+          return read();
+        } catch (error) {
+          issues.push(`${label}: ${error?.message || String(error)}`);
+          return fallback;
+        }
+      };
+      const prompt = guarded('prompt box', () => findPromptBox(doc));
+      const generate = guarded('Generate button', () => (prompt ? findGenerateButton(doc, prompt.el) : findGenerateButton(doc, null)));
+      const trigger = guarded('settings control', () => (prompt ? findSettingsTrigger(doc, prompt.el) : null));
+      const agent = guarded('agent toggle', () => (prompt ? findAgentToggle(doc, prompt.el) : null));
       return {
         url: location?.href ?? '',
         isProjectPage: /\/project\//.test(location?.pathname ?? ''),
@@ -63,13 +73,14 @@ export function createFlowAdapter(options = {}) {
         promptStrategy: prompt?.strategy ?? null,
         generateFound: Boolean(generate),
         generateStrategy: generate?.strategy ?? null,
-        generateEnabled: generate ? isGenerateEnabled(generate.el) : false,
+        generateEnabled: guarded('Generate state', () => (generate ? isGenerateEnabled(generate.el) : false), false),
         settingsFound: Boolean(trigger),
         settingsStrategy: trigger?.strategy ?? null,
         agentOn: Boolean(agent?.on),
         agentFound: Boolean(agent),
-        referencesAttached: prompt ? countAttachedReferences(doc, prompt.el) : 0,
-        outputsVisible: takeOutputSnapshot(doc).outputKeys.length,
+        referencesAttached: guarded('references', () => (prompt ? countAttachedReferences(doc, prompt.el) : 0), 0),
+        outputsVisible: guarded('outputs', () => takeOutputSnapshot(doc).outputKeys.length, 0),
+        issues,
       };
     },
 
@@ -83,6 +94,7 @@ export function createFlowAdapter(options = {}) {
         check('Generate button', probe.generateFound, probe.generateFound ? `Found (${probe.generateStrategy}), ${probe.generateEnabled ? 'enabled' : 'disabled'}.` : 'Not found.'),
         check('Settings control', probe.settingsFound, probe.settingsFound ? `Found (${probe.settingsStrategy}).` : 'Not found.'),
         check('Agent mode', !probe.agentOn, probe.agentFound ? (probe.agentOn ? 'Agent is ON. Turn it off.' : 'Off.') : 'No agent control detected.'),
+        check('Page checks', probe.issues.length === 0, probe.issues.length ? probe.issues.join('; ') : 'All page checks ran.'),
       ];
       return { ...probe, checks, adapterVersion: ADAPTER_VERSION };
     },

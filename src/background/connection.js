@@ -3,6 +3,9 @@ import { AutomationError, ERROR_CODES, toErrorPayload } from '../utils/errors.js
 import { withTimeout } from '../utils/async.js';
 import { FLOW_TARGET } from '../shared/protocol.js';
 
+/** A connection check waits this long for a page that is busy rendering. */
+const PROBE_TIMEOUT_MS = 8000;
+
 /**
  * Connection status for the side panel's "● Connected / ○ Not Connected" line.
  * "Connected" means: the active tab in the focused window is a Flow page AND its
@@ -45,13 +48,13 @@ async function askTab(chromeApi, tabId, cmd) {
   const send = () => chromeApi.tabs.sendMessage(tabId, { target: FLOW_TARGET, cmd, payload: null }, { frameId: 0 });
   let reply;
   try {
-    reply = await withTimeout(send(), 4000, 'Flow did not respond.');
+    reply = await withTimeout(send(), PROBE_TIMEOUT_MS, 'Flow did not respond.');
   } catch (error) {
     if (!isNoReceiverError(error)) throw error;
     // No connector in this tab: it was open before the extension was loaded or reloaded.
     await attachConnector(chromeApi, tabId);
     try {
-      reply = await withTimeout(send(), 4000, 'Flow did not respond after attaching.');
+      reply = await withTimeout(send(), PROBE_TIMEOUT_MS, 'Flow did not respond after attaching.');
     } catch (retryError) {
       throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, withDetails(RELOAD_TAB_MESSAGE, retryError));
     }

@@ -77,7 +77,7 @@ export function findGenerateButton(doc, promptEl) {
     if (nearby.length) return { el: nearby[nearby.length - 1], strategy: 'generate-in-prompt-region' };
   }
   // Document-wide fallback only accepts an explicit "Generate" label, never "Create project" style controls.
-  const anywhere = queryAllVisible(doc, 'button, [role="button"]').filter((button) => /generate/i.test(accessibleName(button)));
+  const anywhere = queryAllVisible(doc, 'button, [role="button"]').filter((button) => /\bgenerate\b/i.test(accessibleName(button)));
   if (anywhere.length) return { el: anywhere[anywhere.length - 1], strategy: 'generate-in-document' };
   return null;
 }

@@ -22,7 +22,7 @@ import {
  */
 
 const MAX_CLEAR_ROUNDS = 25;
-const ATTACH_TIMEOUT_MS = 20000;
+export const ATTACH_TIMEOUT_MS = 20000;
 
 /** Number of reference attachments Flow currently shows near the prompt. */
 export function countAttachedReferences(doc, promptEl) {

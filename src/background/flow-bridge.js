@@ -10,6 +10,30 @@ import { FLOW_COMMANDS, FLOW_PORT_METHODS, FLOW_TARGET } from '../shared/protoco
 
 export const FLOW_CONTENT_SCRIPT = 'content/content-script.js';
 
+/**
+ * The longest each command may take before the worker gives up on it. Every limit is above the
+ * slowest in-page wait for that command, so a step that is still working is not reported as failed.
+ * A false failure pauses the run, and a retry could then repeat the step.
+ */
+export const COMMAND_TIMEOUTS_MS = Object.freeze({
+  readSettings: 30000,
+  applySettings: 90000,
+  clearReferences: 45000,
+  generationStatus: 15000,
+});
+
+/** Attaching files: the file picker, then one wait per file for Flow to show its thumbnail. */
+export const ATTACH_BUDGET_MS = Object.freeze({ picker: 45000, perFile: 30000 });
+
+/** The limit for one command. `payload` is used only to size the attach budget. */
+export function commandTimeoutMs(cmd, payload, fallbackMs) {
+  if (cmd === 'attachReferences') {
+    const files = Array.isArray(payload) ? payload.length : 1;
+    return ATTACH_BUDGET_MS.picker + files * ATTACH_BUDGET_MS.perFile;
+  }
+  return COMMAND_TIMEOUTS_MS[cmd] ?? fallbackMs;
+}
+
 /** Shown when the connector cannot be reached even after it has been injected. */
 export const RELOAD_TAB_MESSAGE = 'Could not connect to this Flow tab. Reload the Flow tab (press F5) and try again.';
 
@@ -130,7 +154,7 @@ export function createFlowBridge({ getTabId, chromeApi = globalThis.chrome, time
     const reply = await withTimeout(
       deliver(tab.id, cmd, payload),
       timeout,
-      `Flow did not answer "${cmd}" within ${Math.round(timeout / 1000)} seconds. The page may be busy or frozen.`,
+      `Flow did not answer "${cmd}" within ${Math.round(timeout / 1000)} seconds. The page may be busy or frozen, and the step may still finish in Flow. Check Flow before retrying.`,
     );
     if (!reply) {
       throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, `Flow returned no answer to "${cmd}".`);
@@ -142,7 +166,7 @@ export function createFlowBridge({ getTabId, chromeApi = globalThis.chrome, time
   /** Lightweight check used by the connection indicator (no tab binding needed). */
   const port = {};
   for (const method of FLOW_PORT_METHODS) {
-    port[method] = (payload) => call(method, payload, { timeout: method === 'generationStatus' ? 15000 : timeoutMs });
+    port[method] = (payload) => call(method, payload, { timeout: commandTimeoutMs(method, payload, timeoutMs) });
   }
   port.diagnose = () => call('diagnose', null, { timeout: 15000 });
   /** Diagnostics for a specific tab (used before any tab is bound). */

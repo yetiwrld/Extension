@@ -53,6 +53,9 @@ export const DEFAULT_TIMINGS = Object.freeze({
 
 const SETTING_LABELS = Object.freeze({ mode: 'mode', model: 'model', aspectRatio: 'aspect ratio' });
 
+/** A status read has no side effects, so a busy page that misses one answer is asked again, this many times in all. */
+const POLL_READ_ATTEMPTS = 3;
+
 /** Errors that mean "Flow is not reachable right now": pause, never fail the scene. */
 const PAUSE_CODES = new Set([
   ERROR_CODES.FLOW_NOT_CONNECTED,
@@ -576,7 +579,7 @@ export class AutomationRunner {
 
     // Never start while Flow is still generating something else in this project.
     const idle = await awaitFlowIdle({
-      poll: () => this.flow.generationStatus(null),
+      poll: () => this.readGenerationStatus(null),
       clock: this.clock,
       timeoutMs: this.timings.idleTimeoutMs,
       pollMs: this.timings.pollMs,
@@ -672,7 +675,7 @@ export class AutomationRunner {
     let accepted;
     try {
       accepted = await awaitSubmissionAccepted({
-        poll: () => this.flow.generationStatus(baseline),
+        poll: () => this.readGenerationStatus(baseline),
         clock: this.clock,
         timeoutMs: this.timings.submitTimeoutMs,
         pollMs: this.timings.pollMs,
@@ -716,13 +719,29 @@ export class AutomationRunner {
     return this.waitForScene(sceneId);
   }
 
+  /**
+   * Read Flow's generation status. A read has no side effects, so a busy page that misses one
+   * answer is asked again. Any other failure is raised at once.
+   */
+  async readGenerationStatus(baseline) {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await this.flow.generationStatus(baseline);
+      } catch (error) {
+        const transient = toErrorPayload(error).code === ERROR_CODES.FLOW_NO_RESPONSE;
+        if (!transient || attempt >= POLL_READ_ATTEMPTS) throw error;
+        await this.clock.sleep(this.timings.pollMs);
+      }
+    }
+  }
+
   /** Wait for Flow to report completion. Completion is never inferred from elapsed time. */
   async waitForScene(sceneId) {
     const scene = this.findScene(sceneId);
     const baseline = scene.baseline;
     const minutes = this.prefs().generationTimeoutMinutes;
     const poll = async () => {
-      const status = await this.flow.generationStatus(baseline);
+      const status = await this.readGenerationStatus(baseline);
       await this.reportProgress(sceneId, status);
       return status;
     };
