@@ -114,8 +114,10 @@ test('the bridge injects the connector once when the page predates the extension
   let injected = 0;
   let sends = 0;
   const chromeApi = fakeChrome();
-  chromeApi.scripting.executeScript = async () => {
-    injected += 1;
+  chromeApi.scripting.executeScript = async (options) => {
+    // Status reads and clears are functions. Only file injections count as injections.
+    if (options.files) injected += 1;
+    return [{ result: null }];
   };
   chromeApi.tabs.sendMessage = async () => {
     sends += 1;

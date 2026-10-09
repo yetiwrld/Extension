@@ -1,6 +1,6 @@
 import { AutomationError, ERROR_CODES, fromErrorPayload } from '../utils/errors.js';
 import { withTimeout } from '../utils/async.js';
-import { FLOW_COMMANDS, FLOW_PORT_METHODS, FLOW_TARGET } from '../shared/protocol.js';
+import { CONNECTOR_STATUS_KEY, FLOW_COMMANDS, FLOW_PORT_METHODS, FLOW_TARGET } from '../shared/protocol.js';
 
 /**
  * Service-worker side of the Flow port. Each call is routed to the content script
@@ -37,6 +37,10 @@ export function commandTimeoutMs(cmd, payload, fallbackMs) {
 /** Shown when the connector cannot be reached even after it has been injected. */
 export const RELOAD_TAB_MESSAGE = 'Could not connect to this Flow tab. Reload the Flow tab (press F5) and try again.';
 
+/** Shown when the connector is running in the tab, yet Chrome did not deliver the command to it. */
+export const RUNNING_NOT_DELIVERED_MESSAGE =
+  'The Flow connector is running in this tab, but Chrome did not deliver the command. Reload the Flow tab (press F5) and try again.';
+
 /** Shown when Chrome refuses to inject the connector into the tab. */
 export const INJECT_FAILED_MESSAGE = 'Chrome would not load the Flow connector into this tab. Reload the Flow tab (press F5) and try again.';
 
@@ -71,11 +75,69 @@ export function withDetails(message, error) {
  * extension was loaded or reloaded. Throws a user-facing error, with Chrome's reason, if Chrome refuses.
  */
 export async function attachConnector(chromeApi, tabId) {
+  await clearConnectorStatus(chromeApi, tabId);
   try {
     await chromeApi.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: [FLOW_CONTENT_SCRIPT] });
   } catch (error) {
     throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, withDetails(INJECT_FAILED_MESSAGE, error));
   }
+  // The script ran, but the connector may still have declined to start. It records why.
+  const status = await readConnectorStatus(chromeApi, tabId);
+  if (status?.installed === false) {
+    throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, status.reason || RELOAD_TAB_MESSAGE);
+  }
+}
+
+/** The status read and clear are quick. A tab that does not answer them in time is treated as unknown. */
+const STATUS_TIMEOUT_MS = 3000;
+
+/** What the connector in the tab reported about itself, or null if it reported nothing. */
+async function readConnectorStatus(chromeApi, tabId) {
+  try {
+    const [injection] = await withTimeout(
+      chromeApi.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        args: [CONNECTOR_STATUS_KEY],
+        func: (key) => globalThis[key] ?? null,
+      }),
+      STATUS_TIMEOUT_MS,
+      'The Flow tab did not report its connector status.',
+    );
+    return injection?.result ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Forget a status left by an earlier connector, so the next report comes from this injection. */
+async function clearConnectorStatus(chromeApi, tabId) {
+  try {
+    await withTimeout(
+      chromeApi.scripting.executeScript({
+        target: { tabId, frameIds: [0] },
+        args: [CONNECTOR_STATUS_KEY],
+        func: (key) => {
+          globalThis[key] = null;
+        },
+      }),
+      STATUS_TIMEOUT_MS,
+      'The Flow tab did not clear its connector status.',
+    );
+  } catch {
+    // If the tab cannot be reached, the injection that follows reports the failure.
+  }
+}
+
+/**
+ * The error for a command that still got no answer after the connector was attached. The connector's
+ * own report says why, when it made one. Chrome's error is kept as details.
+ */
+export async function connectorFailure(chromeApi, tabId, error) {
+  const status = await readConnectorStatus(chromeApi, tabId);
+  let message = RELOAD_TAB_MESSAGE;
+  if (status?.installed === false) message = status.reason || RELOAD_TAB_MESSAGE;
+  else if (status?.installed === true) message = RUNNING_NOT_DELIVERED_MESSAGE;
+  return new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, withDetails(message, error));
 }
 
 export function isFlowUrl(url) {
@@ -139,7 +201,7 @@ export function createFlowBridge({ getTabId, chromeApi = globalThis.chrome, time
       return await chromeApi.tabs.sendMessage(tabId, message, { frameId: 0 });
     } catch (error) {
       if (isNotDeliveredError(error)) {
-        throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, withDetails(RELOAD_TAB_MESSAGE, error));
+        throw await connectorFailure(chromeApi, tabId, error);
       }
       throw noReplyError(cmd, error);
     }

@@ -29,7 +29,8 @@
   <body>
     <script>
       // The content script registers its listener on this stub, as it would on chrome.runtime.onMessage.
-      window.chrome = { runtime: { onMessage: { addListener: function (fn) { (window.__fsqListeners = window.__fsqListeners || []).push(fn); } } } };
+      // A live extension context always has an id; the connector checks for it before it registers.
+      window.chrome = { runtime: { id: 'flow-scene-queue-harness', onMessage: { addListener: function (fn) { (window.__fsqListeners = window.__fsqListeners || []).push(fn); } } } };
     </script>
     <script src="/dist/content/content-script.js"></script>
     <script type="module">

@@ -16,6 +16,9 @@ export const MESSAGE_TYPE = Object.freeze({
 
 export const FLOW_TARGET = 'flow-adapter';
 
+/** Global the connector writes its status to in the tab. The service worker reads it when a command gets no answer. */
+export const CONNECTOR_STATUS_KEY = '__flowSceneQueueConnectorStatus__';
+
 /** Methods the queue runner calls on the Flow port. */
 export const FLOW_PORT_METHODS = Object.freeze([
   'probe',

@@ -17,7 +17,7 @@ const REFUSED = 'Cannot access contents of the page. Extension manifest must req
  * A fake chrome with one Flow tab. Each send gets the next answer (an Error is thrown, anything
  * else is returned). Injection succeeds unless injectError is given.
  */
-function fakeChrome({ sendAnswers = [], injectError = null } = {}) {
+function fakeChrome({ sendAnswers = [], injectError = null, status = null } = {}) {
   const calls = { sends: 0, injections: 0 };
   return {
     calls,
@@ -31,7 +31,9 @@ function fakeChrome({ sendAnswers = [], injectError = null } = {}) {
       },
     },
     scripting: {
-      executeScript: async () => {
+      executeScript: async (options) => {
+        // Status reads and clears are functions. Only file injections count as injections.
+        if (options.func) return [{ result: status }];
         calls.injections += 1;
         if (injectError) throw new Error(injectError);
         return [{ result: null }];

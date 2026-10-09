@@ -101,7 +101,12 @@ function chromeApiFor(page) {
       sendMessage: async (_tabId, message) => deliver(page, message),
     },
     scripting: {
-      executeScript: async ({ target, files }) => {
+      executeScript: async ({ target, files, func, args = [] }) => {
+        if (func) {
+          // Status reads and clears run inside the page, as Chrome runs them in the connector's world.
+          const run = page.window.eval(`(${func.toString()})`);
+          return [{ result: run(...args) }];
+        }
         page.injectionCalls += 1;
         if (page.injectionError) throw new Error(page.injectionError);
         if (target.tabId !== TAB_ID || target.frameIds?.[0] !== 0 || files[0] !== 'content/content-script.js') {

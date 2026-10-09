@@ -29,7 +29,7 @@ test('a reply that cannot be sent is replaced by an error reply, so the worker i
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: FLOW_URL, runScripts: 'outside-only' });
   const listeners = [];
   dom.window.chrome = {
-    runtime: { onMessage: { addListener: (fn) => listeners.push(fn), removeListener: () => {} } },
+    runtime: { id: 'flow-scene-queue-test', onMessage: { addListener: (fn) => listeners.push(fn), removeListener: () => {} } },
   };
   dom.window.eval(contentScript);
   assert.equal(listeners.length, 1, 'the content script registers one listener');
