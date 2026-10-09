@@ -10,7 +10,7 @@
  * panel on a real project to see which strategies match before relying on it.
  */
 
-import { accessibleName, ancestors, isDisabled, isVisible, labelText, normalizeText, queryAllVisible } from './dom.js';
+import { accessibleName, ancestors, isDisabled, isVisible, labelText, normalizeText, queryAllVisible, waitForValue } from './dom.js';
 
 const PROMPT_HINT = /(prompt|describe|imagine|what do you want|what would you like|create|generate|write)/i;
 const GENERATE_NAME = /^(?:[a-z_]+\s+)?(generate|create|make)\b/i;
@@ -113,25 +113,92 @@ function bestTrigger(candidates) {
   return best;
 }
 
+/** True when several candidates share the top rank: the match is reported, not hidden. */
+function isAmbiguous(candidates) {
+  const best = bestTrigger(candidates);
+  if (!best) return false;
+  return candidates.filter((candidate) => candidate.rank === best.rank).length > 1;
+}
+
+/** Custom-element hosts (shadow DOM) are invisible to TRIGGER_SELECTOR; strong hosts qualify as triggers too. */
+function collectHosts(scope, minRank) {
+  const out = [];
+  let scanned = 0;
+  for (const el of scope.querySelectorAll('*')) {
+    if (out.length >= 8 || scanned >= 3000) break;
+    scanned += 1;
+    if (!el.tagName.includes('-')) continue;
+    const rank = settingsTriggerRank(el);
+    if (rank >= minRank) out.push({ el, rank });
+  }
+  return out;
+}
+
 /**
  * The control that opens the settings popover (model / mode / aspect ratio).
  * The prompt region is searched first. If it holds no candidate, the whole document is
  * searched with stronger requirements only: the control can sit just outside the detected
  * region, but a weak match anywhere on the page (a bare "Video" tab, say) must never be
  * clicked blindly, so the fallback demands a model-like name or a declared popup.
+ * When several controls match equally well, the first is used and `ambiguous` says so.
  */
 export function findSettingsTrigger(doc, promptEl) {
   const region = findPromptRegion(promptEl) ?? doc;
-  const collect = (scope, minRank) =>
-    queryAllVisible(scope, TRIGGER_SELECTOR)
-      .map((el) => ({ el, rank: settingsTriggerRank(el) }))
-      .filter((item) => item.rank >= minRank);
-  const inRegion = bestTrigger(collect(region, 1));
+  const collect = (scope, minRank) => [
+    ...queryAllVisible(scope, TRIGGER_SELECTOR).map((el) => ({ el, rank: settingsTriggerRank(el) })),
+    ...collectHosts(scope, minRank),
+  ].filter((item) => item.rank >= minRank);
+  const inRegionList = collect(region, 1);
+  const inRegion = bestTrigger(inRegionList);
   const found = inRegion ?? bestTrigger(collect(doc, 2));
   if (!found) return null;
   const opensPopup = found.el.hasAttribute('aria-haspopup') || found.el.hasAttribute('aria-expanded');
   const base = opensPopup ? 'settings-trigger-aria-haspopup' : 'settings-trigger-by-name';
-  return { el: found.el, strategy: inRegion ? base : `${base}-in-document` };
+  return { el: found.el, strategy: inRegion ? base : `${base}-in-document`, ambiguous: isAmbiguous(inRegionList) };
+}
+
+/** Find the settings trigger, waiting a bounded time for Flow's asynchronous UI to render it. */
+export async function findSettingsTriggerWhenReady(doc, promptEl, { timeoutMs = 2000, intervalMs = 150, sleep } = {}) {
+  return waitForValue(() => findSettingsTrigger(doc, promptEl), { timeoutMs, intervalMs, sleep });
+}
+
+/** Find the prompt composer, waiting a bounded time for Flow's asynchronous UI to render it. */
+export async function findPromptBoxWhenReady(doc, { timeoutMs = 2500, intervalMs = 150, sleep } = {}) {
+  return waitForValue(() => findPromptBox(doc), { timeoutMs, intervalMs, sleep });
+}
+
+/** What a control is for, from its accessible name and attributes. Used for diagnostics and prioritisation. */
+export function classifyControl(el) {
+  const name = accessibleName(el);
+  if (!name) return 'other';
+  if (GENERATE_NAME.test(name) || /\bgenerate\b/i.test(name)) return 'generate';
+  if (ADD_NAME.test(name) || /\b(add|upload|attach)\b/i.test(name)) return 'add';
+  if (REMOVE_NAME.test(name)) return 'remove';
+  if (AGENT_NAME.test(name)) return 'agent';
+  if (MODEL_NAME.test(name)) return 'model';
+  if (ASPECT_RATIO_TEXT.test(name)) return 'aspect-ratio';
+  if (MODE_NAME.test(name)) return 'mode';
+  if (SETTINGS_NAME.test(name)) return 'settings';
+  return 'other';
+}
+
+/** The current Mode / Model / Aspect ratio as shown by the controls themselves, when identifiable. */
+export function findDetectedSettings(doc, promptEl) {
+  const region = findPromptRegion(promptEl) ?? doc;
+  let model = null;
+  let aspectRatio = null;
+  let mode = null;
+  for (const el of queryAllVisible(region, CONTROL_SELECTOR)) {
+    const name = accessibleName(el);
+    if (!name) continue;
+    if (!model && MODEL_NAME.test(name)) {
+      // The model-name control shows the active model ("Nano Banana Pro \u25be").
+      model = normalizeText(name).replace(/[\u25be\u25b4\u25bc\u25c5\u2304\u2305\u2193]+\s*$/g, '').trim() || null;
+    }
+    if (!aspectRatio && ASPECT_RATIO_TEXT.test(name)) aspectRatio = name;
+    if (!mode && MODE_NAME.test(name)) mode = name;
+  }
+  return { mode, model, aspectRatio };
 }
 
 /**
@@ -150,7 +217,10 @@ export function listPromptControls(doc, promptEl, limit = 10) {
       tag: el.tagName.toLowerCase(),
       role: el.getAttribute('role') ?? '',
       name: accessibleName(el).slice(0, 40),
+      title: (el.getAttribute('title') ?? '').slice(0, 40),
       popup: el.getAttribute('aria-haspopup') ?? '',
+      disabled: isDisabled(el),
+      purpose: classifyControl(el),
     });
   };
   for (const el of queryAllVisible(region, CONTROL_SELECTOR)) push(el);

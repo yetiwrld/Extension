@@ -59,6 +59,16 @@ test('the connection line reads ● Connected or ○ Not Connected from the acti
   assert.match(off, /○ Not Connected/);
 });
 
+test('the connection line shows why when the settings control was not detected', () => {
+  const hidden = R.renderConnection({ connection: { status: 'connected', message: 'Connected to Flow.', promptFound: true, settingsFound: true } });
+  assert.doesNotMatch(hidden, /conn-detail/);
+  const shown = R.renderConnection({
+    connection: { status: 'connected', message: 'Connected to Flow. The model/settings control was not found — run "Check Flow page" in Settings.', promptFound: true, settingsFound: false },
+  });
+  assert.match(shown, /conn-detail/);
+  assert.match(shown, /model\/settings control was not found/);
+});
+
 test('the Flow settings section offers only what Flow exposed', () => {
   const html = R.renderFlowSettings(
     {

@@ -5,7 +5,9 @@ import {
   findOpenPopover,
   findPromptBox,
   findSettingsTrigger,
+  findSettingsTriggerWhenReady,
   isSelected,
+  listPromptControls,
   readPopoverOptions,
 } from './selectors.js';
 
@@ -27,13 +29,7 @@ export const SETTING_KEYS = Object.freeze(['mode', 'model', 'aspectRatio']);
  */
 export async function readFlowSettings(ctx) {
   const prompt = requirePrompt(ctx.doc);
-  const trigger = findSettingsTrigger(ctx.doc, prompt.el);
-  if (!trigger) {
-    throw new AutomationError(
-      ERROR_CODES.FLOW_UI_CHANGED,
-      'Could not find the model/settings control next to the Flow prompt box.',
-    );
-  }
+  const trigger = await requireSettingsTrigger(ctx, prompt);
   const popover = await openSettingsPopover(ctx, trigger.el);
   try {
     const options = readPopoverOptions(popover);
@@ -53,10 +49,7 @@ export async function applyFlowSettings(ctx, target) {
     if (!wanted) continue;
 
     const prompt = requirePrompt(ctx.doc);
-    const trigger = findSettingsTrigger(ctx.doc, prompt.el);
-    if (!trigger) {
-      throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Could not find the model/settings control next to the Flow prompt box.');
-    }
+    const trigger = await requireSettingsTrigger(ctx, prompt);
     const popover = await openSettingsPopover(ctx, trigger.el);
     let applied = false;
     try {
@@ -157,6 +150,27 @@ function requirePrompt(doc) {
     throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found. Open a Flow project and keep the prompt box visible.');
   }
   return prompt;
+}
+
+/**
+ * The control that opens Flow's settings menu. Flow renders it asynchronously, so a missing
+ * control is waited for briefly before failing. The error names the controls that ARE near
+ * the prompt, so a layout change can be diagnosed from the message alone.
+ */
+async function requireSettingsTrigger(ctx, prompt) {
+  const found =
+    findSettingsTrigger(ctx.doc, prompt.el) ??
+    (await findSettingsTriggerWhenReady(ctx.doc, prompt.el, { timeoutMs: ctx.timings.popoverMs, sleep: ctx.sleep }));
+  if (!found) {
+    const nearby = listPromptControls(ctx.doc, prompt.el, 6)
+      .map((control) => `"${control.name || '(no accessible name)'}"`)
+      .join(', ');
+    throw new AutomationError(
+      ERROR_CODES.FLOW_UI_CHANGED,
+      `Could not find the model/settings control next to the Flow prompt box.${nearby ? ` Controls near the prompt: ${nearby}.` : ''} Run "Check Flow page" in Settings for the full report.`,
+    );
+  }
+  return found;
 }
 
 function sameName(a, b) {

@@ -25,13 +25,19 @@ export async function checkFlowConnection({ chromeApi = globalThis.chrome, now =
   }
   try {
     const probe = await askTab(chromeApi, tab.id, 'probe');
+    const settingsFound = Boolean(probe.settingsFound);
     return {
       status: 'connected',
       tabId: tab.id,
       url: tab.url,
-      message: probe.promptFound ? 'Connected to Flow.' : 'Connected to Flow. Open a project to find the prompt box.',
+      message: !probe.promptFound
+        ? 'Connected to Flow. Open a project to find the prompt box.'
+        : !settingsFound
+          ? 'Connected to Flow. The model/settings control was not found — run "Check Flow page" in Settings.'
+          : 'Connected to Flow.',
       checkedAt,
       promptFound: Boolean(probe.promptFound),
+      settingsFound,
       projectPage: Boolean(probe.isProjectPage),
     };
   } catch (error) {

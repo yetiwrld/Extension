@@ -84,7 +84,7 @@ export function defaultValue(key) {
     case STORAGE_KEYS.library:
       return [];
     case STORAGE_KEYS.connection:
-      return { status: 'not_connected', tabId: null, url: null, checkedAt: null, message: 'Checking Flow connection\u2026', probe: null };
+      return { status: 'not_connected', tabId: null, url: null, checkedAt: null, message: 'Checking Flow connection\u2026', probe: null, settingsFound: null };
     default:
       return undefined;
   }

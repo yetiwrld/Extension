@@ -42,8 +42,10 @@ export function renderConnection(snapshot) {
   const connection = snapshot?.connection ?? { status: 'not_connected', message: 'Checking Flow connection\u2026' };
   const on = connection.status === 'connected';
   const message = connection.message ?? '';
-  // The detail line is only useful when something needs the user's attention.
-  const detail = on && connection.promptFound !== false ? '' : truncate(message, 110);
+  // The detail line is only useful when something needs the user's attention: a failed
+  // check, no prompt box, or a connected tab whose settings control was not detected.
+  const needsAttention = !on || connection.promptFound === false || connection.settingsFound === false;
+  const detail = needsAttention ? truncate(message, 110) : '';
   return `
     <div class="conn-state ${on ? 'is-on' : 'is-off'}" data-connection="${on ? 'connected' : 'not-connected'}" title="${esc(message)}">${on ? '\u25cf Connected' : '\u25cb Not Connected'}</div>
     ${detail ? `<div class="conn-detail">${esc(detail)}</div>` : ''}`;
@@ -393,7 +395,7 @@ export function renderSettings(snapshot, ui) {
           const icon = check.ok ? '\u2713' : check.warn ? '\u26a0' : '\u2715';
           return `<div class="check ${cls}"><span class="check-icon">${icon}</span><span><span class="check-label">${esc(check.label)}</span> <span class="check-detail">${esc(check.detail)}</span></span></div>`;
         })
-        .join('')}</div>`
+        .join('')}</div>${renderDiagnosticsExtras(ui.diagnostics)}`
     : '';
   return `
     <div class="settings-list">${rows}</div>
@@ -408,6 +410,34 @@ export function renderSettings(snapshot, ui) {
       <button type="button" class="btn btn-danger btn-sm" data-action="clear-library" ${active || ui.busy ? 'disabled' : ''}>Clear reference library</button>
     </div>
     ${diagnostics}`;
+}
+
+/** Below the checks: the settings the controls themselves show, the nearby controls, and a copy button. */
+function renderDiagnosticsExtras(diagnostics) {
+  const detected = diagnostics.detectedSettings ?? {};
+  const detectedParts = [
+    detected.mode ? `mode ${esc(detected.mode)}` : '',
+    detected.model ? `model ${esc(detected.model)}` : '',
+    detected.aspectRatio ? `aspect ratio ${esc(detected.aspectRatio)}` : '',
+  ].filter(Boolean);
+  const detectedLine = detectedParts.length
+    ? `<div class="check is-ok"><span class="check-icon">\u2713</span><span><span class="check-label">Detected in Flow</span> <span class="check-detail">${detectedParts.join(' \u00b7 ')}</span></span></div>`
+    : '';
+  const controls = Array.isArray(diagnostics.promptControls) ? diagnostics.promptControls : [];
+  const controlsBlock = controls.length
+    ? `<details class="controls-list"><summary>Controls near the prompt (${controls.length})</summary><ul>${controls
+        .map((control) => {
+          const bits = [esc(control.tag)];
+          if (control.role) bits.push(`[${esc(control.role)}]`);
+          if (control.popup) bits.push(`[${esc(control.popup)}]`);
+          if (control.disabled) bits.push('disabled');
+          const purpose = control.purpose && control.purpose !== 'other' ? ` \u2014 ${esc(control.purpose)}` : '';
+          return `<li><code>${bits.join(' ')}</code> ${esc(control.name || '(no accessible name)')}${purpose}</li>`;
+        })
+        .join('')}</ul></details>`
+    : '';
+  return `${detectedLine}${controlsBlock}
+    <div class="row"><button type="button" class="btn btn-secondary btn-sm" data-action="copy-diagnostics">Copy report</button></div>`;
 }
 
 export function renderNotice(notice) {

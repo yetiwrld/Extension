@@ -48,7 +48,12 @@ Do this once on a real, signed-in Flow project before using the queue on real wo
    **● Connected**.
 3. Open **Settings → Check Flow page**. Each check should be OK:
    Flow page, Project open, Prompt box, Generate button, Settings control, Agent mode.
-   Any failing check names the heuristic that needs updating (table above).
+   Any failing check names the heuristic that needs updating (table above). When the
+   settings control is not found, the report lists the controls that ARE near the prompt
+   (tag, role, accessible name, purpose) and the settings those controls show; press
+   **Copy report** to put the whole report on the clipboard and paste it where the
+   heuristic is being fixed. The report contains page structure only — never your prompt
+   text or account details.
 4. Press **Read from Flow**. Mode, Model and Aspect ratio should list exactly what Flow's
    settings menu shows, and the current values should match Flow.
 5. Add one real reference image whose filename a one-scene document names exactly. Analyze a

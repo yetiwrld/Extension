@@ -65,7 +65,12 @@ test('probe reports the prompt box, Generate, settings and Agent state on a proj
   assert.equal(probe.generateFound, true);
   assert.equal(probe.generateEnabled, false, 'Generate is disabled while the prompt is empty');
   assert.equal(probe.settingsFound, true);
-  assert.deepEqual(probe.settingsCandidates, [], 'no candidates are listed when the settings control is found');
+  assert.equal(probe.settingsAmbiguous, false);
+  assert.ok(
+    probe.promptControls.some((control) => control.name === 'Nano Banana Pro \u25be' && control.purpose === 'model'),
+    'the controls near the prompt are listed',
+  );
+  assert.deepEqual(probe.detectedSettings, { mode: null, model: 'Nano Banana Pro', aspectRatio: null });
   assert.equal(probe.agentOn, false);
   assert.equal(probe.isProjectPage, true);
 });

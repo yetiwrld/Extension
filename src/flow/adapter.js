@@ -7,9 +7,12 @@ import { attachReferences, clearReferences, countAttachedReferences } from './re
 import { generationStatus as readGenerationStatus, snapshotOutputs as takeOutputSnapshot } from './outputs.js';
 import {
   findAgentToggle,
+  findDetectedSettings,
   findGenerateButton,
   findPromptBox,
+  findPromptBoxWhenReady,
   findSettingsTrigger,
+  findSettingsTriggerWhenReady,
   isGenerateEnabled,
   listPromptControls,
 } from './selectors.js';
@@ -30,13 +33,20 @@ export const DEFAULT_TIMINGS = Object.freeze({
   popoverMs: 2500,
 });
 
+/** Bounded waits for Flow's asynchronous UI. Waiting replaces failing on a half-rendered page. */
+export const DEFAULT_WAITS = Object.freeze({
+  composerMs: 2500,
+  triggerMs: 2000,
+});
+
 /**
- * @param {{doc?: Document, sleep?: (ms: number) => Promise<void>, timings?: Partial<typeof DEFAULT_TIMINGS>, location?: {href: string}}} [options]
+ * @param {{doc?: Document, sleep?: (ms: number) => Promise<void>, timings?: Partial<typeof DEFAULT_TIMINGS>, waits?: Partial<typeof DEFAULT_WAITS>, location?: {href: string}}} [options]
  */
 export function createFlowAdapter(options = {}) {
   const doc = options.doc ?? globalThis.document;
   const sleep = options.sleep ?? defaultSleep;
   const timings = { ...DEFAULT_TIMINGS, ...(options.timings ?? {}) };
+  const waits = { ...DEFAULT_WAITS, ...(options.waits ?? {}) };
   const location = options.location ?? globalThis.location;
   const ctx = { doc, sleep, timings };
 
@@ -63,13 +73,34 @@ export function createFlowAdapter(options = {}) {
           return fallback;
         }
       };
-      const prompt = guarded('prompt box', () => findPromptBox(doc));
+      const isProjectPage = /\/project\//.test(location?.pathname ?? '');
+      const guardedAsync = async (label, read, fallback = null) => {
+        try {
+          return await read();
+        } catch (error) {
+          issues.push(`${label}: ${error?.message || String(error)}`);
+          return fallback;
+        }
+      };
+      let prompt = guarded('prompt box', () => findPromptBox(doc));
+      if (!prompt && isProjectPage) {
+        // Flow renders the project UI asynchronously: wait briefly for the composer
+        // instead of reporting a missing prompt on a page that is still loading.
+        prompt = await guardedAsync('prompt box (after waiting)', () =>
+          findPromptBoxWhenReady(doc, { timeoutMs: waits.composerMs, sleep }),
+        );
+      }
       const generate = guarded('Generate button', () => (prompt ? findGenerateButton(doc, prompt.el) : findGenerateButton(doc, null)));
-      const trigger = guarded('settings control', () => (prompt ? findSettingsTrigger(doc, prompt.el) : null));
+      let trigger = guarded('settings control', () => (prompt ? findSettingsTrigger(doc, prompt.el) : null));
+      if (!trigger && prompt) {
+        trigger = await guardedAsync('settings control (after waiting)', () =>
+          findSettingsTriggerWhenReady(doc, prompt.el, { timeoutMs: waits.triggerMs, sleep }),
+        );
+      }
       const agent = guarded('agent toggle', () => (prompt ? findAgentToggle(doc, prompt.el) : null));
       return {
         url: location?.href ?? '',
-        isProjectPage: /\/project\//.test(location?.pathname ?? ''),
+        isProjectPage,
         promptFound: Boolean(prompt),
         promptStrategy: prompt?.strategy ?? null,
         generateFound: Boolean(generate),
@@ -77,11 +108,15 @@ export function createFlowAdapter(options = {}) {
         generateEnabled: guarded('Generate state', () => (generate ? isGenerateEnabled(generate.el) : false), false),
         settingsFound: Boolean(trigger),
         settingsStrategy: trigger?.strategy ?? null,
-        // When the settings control is missing, name the controls that ARE near the prompt,
-        // so the "Check Flow page" report says what the page offers instead of only "Not found".
-        settingsCandidates: trigger
-          ? []
-          : guarded('prompt controls', () => (prompt ? listPromptControls(doc, prompt.el) : []), []),
+        settingsAmbiguous: Boolean(trigger?.ambiguous),
+        // The controls near the prompt and the settings they show, so a mismatch with the
+        // live page can be diagnosed from the panel instead of a bare "Not found".
+        promptControls: guarded('prompt controls', () => (prompt ? listPromptControls(doc, prompt.el) : []), []),
+        detectedSettings: guarded(
+          'detected settings',
+          () => (prompt ? findDetectedSettings(doc, prompt.el) : { mode: null, model: null, aspectRatio: null }),
+          { mode: null, model: null, aspectRatio: null },
+        ),
         agentOn: Boolean(agent?.on),
         agentFound: Boolean(agent),
         referencesAttached: guarded('references', () => (prompt ? countAttachedReferences(doc, prompt.el) : 0), 0),
@@ -98,7 +133,13 @@ export function createFlowAdapter(options = {}) {
         check('Project open', probe.isProjectPage, probe.isProjectPage ? 'URL is a project page.' : 'Open a project (URL contains /project/).'),
         check('Prompt box', probe.promptFound, probe.promptFound ? `Found (${probe.promptStrategy}).` : 'Not found. The prompt box is required.'),
         check('Generate button', probe.generateFound, probe.generateFound ? `Found (${probe.generateStrategy}), ${probe.generateEnabled ? 'enabled' : 'disabled'}.` : 'Not found.'),
-        check('Settings control', probe.settingsFound, probe.settingsFound ? `Found (${probe.settingsStrategy}).` : settingsNotFoundDetail(probe.settingsCandidates)),
+        check(
+          'Settings control',
+          probe.settingsFound,
+          probe.settingsFound
+            ? `Found (${probe.settingsStrategy}).${probe.settingsAmbiguous ? ' Several controls match; the first was used.' : ''}`
+            : settingsNotFoundDetail(probe.promptControls),
+        ),
         check('Agent mode', !probe.agentOn, probe.agentFound ? (probe.agentOn ? 'Agent is ON. Turn it off.' : 'Off.') : 'No agent control detected.'),
         check('Page checks', probe.issues.length === 0, probe.issues.length ? probe.issues.join('; ') : 'All page checks ran.'),
       ];

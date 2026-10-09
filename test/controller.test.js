@@ -13,7 +13,7 @@ import { virtualClock, scriptedFlow, readExampleDocument, FAST_TIMINGS, TEST_LIB
 const FLOW_TAB = { id: 7, url: 'https://flow.google.com/project/abc123', active: true };
 
 /** Minimal chrome.* surface used by the controller, bridge and connection check. */
-function fakeChrome({ tabs = [FLOW_TAB], probe = { promptFound: true, isProjectPage: true }, respond = true } = {}) {
+function fakeChrome({ tabs = [FLOW_TAB], probe = { promptFound: true, isProjectPage: true, settingsFound: true }, respond = true } = {}) {
   const sessionData = {};
   return {
     sessionData,
@@ -90,6 +90,19 @@ test('connection reads "Connected" only when the active tab is Flow and its conn
   const silent = await checkFlowConnection({ chromeApi: fakeChrome({ respond: false }) });
   assert.equal(silent.status, 'not_connected');
   assert.match(silent.message, /Reload the Flow tab/);
+});
+
+test('a connected tab whose settings control is missing says so instead of looking ready', async () => {
+  const api = fakeChrome({ probe: { promptFound: true, isProjectPage: true, settingsFound: false } });
+  const connected = await checkFlowConnection({ chromeApi: api });
+  assert.equal(connected.status, 'connected');
+  assert.equal(connected.promptFound, true);
+  assert.equal(connected.settingsFound, false);
+  assert.match(connected.message, /model\/settings control was not found/);
+
+  const ready = await checkFlowConnection({ chromeApi: fakeChrome() });
+  assert.equal(ready.settingsFound, true);
+  assert.equal(ready.message, 'Connected to Flow.');
 });
 
 test('the bridge reports a closed tab as FLOW_TAB_CLOSED so the queue pauses instead of failing', async () => {

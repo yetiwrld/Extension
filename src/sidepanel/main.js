@@ -8,6 +8,7 @@
 import { send, PanelError, hintFor } from './api.js';
 import { libraryClient } from './library-client.js';
 import { EXAMPLE_DOCUMENT } from './example.js';
+import { copyTextToClipboard, formatDiagnosticsReport } from './diagnostics.js';
 import * as R from './render.js';
 
 const POLL_MS = 1500;
@@ -310,6 +311,14 @@ const ACTIONS = {
       return ok('Reference library cleared.');
     });
   },
+
+  'copy-diagnostics': () =>
+    runAction(async () => {
+      const copied = await copyTextToClipboard(formatDiagnosticsReport(ui.diagnostics));
+      return copied
+        ? ok('Diagnostic report copied.', 'Paste it into a message or file to inspect it.')
+        : warn('The report could not be copied automatically.', 'The report is shown above; select and copy it manually.');
+    }),
 
   'clear-logs': () => runAction(async () => {
     await send('clearLogs');
