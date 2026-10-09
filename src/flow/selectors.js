@@ -1318,6 +1318,9 @@ function collectNamedControlsBy(scope, patterns, limit) {
  * for a menu that IS open.
  */
 function collectMenuScopes(doc, { levels = 3, scopeCap = 12, scanCap = 4000 } = {}) {
+  // Only a Document or a ShadowRoot can be walked: a wrapper object would throw
+  // deep inside the walk, far from the caller that passed it.
+  if (!doc || typeof doc.querySelectorAll !== 'function' || typeof (doc.ownerDocument ?? doc).createTreeWalker !== 'function') return [];
   const scopes = [doc];
   const walk = (root, depth) => {
     if (scopes.length >= scopeCap || depth >= levels) return;
@@ -1826,8 +1829,11 @@ export function findFileInput(doc, { includeHidden = true, promptEl = null } = {
   const region = promptEl ? findPromptRegion(promptEl) : null;
   const score = (item) => {
     let value = 0;
+    if (region && region.contains(item.el)) value += 4;
     if (/image|video|\*\/\*/i.test(item.el.getAttribute('accept') ?? '')) value += 2;
-    if (region && region.contains(item.el)) value += 1;
+    // An input in this document (light DOM or shadow) beats one in a frame: the
+    // composer's own uploader is here, a frame's belongs to something else.
+    if (item.el.ownerDocument === doc) value += 1;
     return value;
   };
   return usable.reduce((best, item) => (score(item) >= score(best) ? item : best), usable[0]).el;
@@ -1842,9 +1848,12 @@ function collectFileInputs(doc) {
   for (const scope of collectMenuScopes(doc)) {
     for (const el of scope.querySelectorAll('input[type="file"]')) add(el, scope === doc ? 'document' : 'shadow root');
   }
-  for (const frameDoc of collectFrameDocs(doc)) {
+  // collectFrameDocs yields {doc, label} wrappers, not documents.
+  for (const frame of collectFrameDocs(doc)) {
+    const frameDoc = frame?.doc;
+    if (!frameDoc?.querySelectorAll) continue;
     for (const scope of collectMenuScopes(frameDoc)) {
-      for (const el of scope.querySelectorAll('input[type="file"]')) add(el, 'frame');
+      for (const el of scope.querySelectorAll('input[type="file"]')) add(el, frame.label ?? 'frame');
     }
   }
   return found;

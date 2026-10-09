@@ -63,3 +63,20 @@ test('when no file input exists anywhere, the error says so instead of blaming t
     },
   );
 });
+
+test('a page with frames is searched without throwing (the frame list holds wrappers, not documents)', async () => {
+  const { window, fixture, adapter } = page({ uploadInShadow: true });
+  // Flow's project page carries frames (the live report counts two). The search must
+  // walk their documents, and must never be handed the {doc, label} wrapper itself.
+  const frame = window.document.createElement('iframe');
+  window.document.body.appendChild(frame);
+  // A disabled input inside a frame: it must be SEEN (and reported) but never used.
+  frame.contentDocument.body.innerHTML = '<input type="file" accept="image/*" disabled />';
+  assert.doesNotThrow(() => inspectFileInputs(window.document));
+  const scopes = inspectFileInputs(window.document).map((item) => item.scope);
+  assert.ok(scopes.some((scope) => /iframe/.test(scope)), `a frame input is reported: ${scopes.join(', ')}`);
+  // The composer's own input (mounted in a shadow root with the Add menu) is used.
+  const result = await adapter.attachReferences([file('Aron.png')]);
+  assert.equal(result.attached, 1);
+  assert.deepEqual(fixture.state.references, ['Aron.png']);
+});
