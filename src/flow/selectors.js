@@ -1876,6 +1876,69 @@ export function inspectFileInputs(doc) {
     }));
 }
 
+/**
+ * Where a dropped file would land: the prompt editor, its composer region, any
+ * element that names itself a drop zone, then the body. Ordered most specific
+ * first; every one is tried in turn and the result is verified by Flow's own chips.
+ */
+export function findDropTargets(doc, promptEl) {
+  const targets = [];
+  const push = (el) => {
+    if (el && !targets.includes(el)) targets.push(el);
+  };
+  push(promptEl);
+  push(findPromptRegion(promptEl));
+  for (const scope of collectMenuScopes(doc)) {
+    for (const el of scope.querySelectorAll('[data-dropzone], [class*="dropzone" i], [class*="drop-target" i], [class*="drag" i]')) {
+      if (isVisible(el)) push(el);
+      if (targets.length >= 6) break;
+    }
+  }
+  push(doc.body);
+  return targets.slice(0, 6);
+}
+
+/**
+ * Watch every scope for an `input[type="file"]` that appears — even for one frame.
+ *
+ * Angular apps commonly create an input, call `.click()` on it to raise the OS
+ * dialog and remove it again in the same task, so polling never sees it. The
+ * captured element keeps Flow's own change listener, so it can still be filled
+ * after it leaves the DOM.
+ * @returns {{found: () => HTMLInputElement|null, stop: () => void}}
+ */
+export function observeFileInputs(doc) {
+  let captured = null;
+  const observers = [];
+  const inspect = (node) => {
+    if (captured || !node || node.nodeType !== 1) return;
+    if (node.matches?.('input[type="file"]')) captured = node;
+    else captured = node.querySelector?.('input[type="file"]') ?? captured;
+  };
+  const view = doc.defaultView;
+  if (view?.MutationObserver) {
+    for (const scope of collectMenuScopes(doc)) {
+      const observer = new view.MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) inspect(node);
+        }
+      });
+      try {
+        observer.observe(scope === doc ? doc.documentElement ?? doc : scope, { childList: true, subtree: true });
+        observers.push(observer);
+      } catch {
+        // A scope that cannot be observed is skipped; the others still watch.
+      }
+    }
+  }
+  return {
+    found: () => captured,
+    stop: () => {
+      for (const observer of observers) observer.disconnect();
+    },
+  };
+}
+
 /** Tiles that look like generated outputs: large images/videos outside the prompt region and popovers. */
 export function findOutputMedia(doc, promptEl) {
   const region = findPromptRegion(promptEl);

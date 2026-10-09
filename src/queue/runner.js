@@ -648,7 +648,10 @@ export class AutomationRunner {
         `Flow confirmed ${attached} of ${pluralize(payloads.length, 'reference file')} for Scene ${scene.numberLabel}.`,
       );
     }
-    await this.log('info', `Scene ${scene.numberLabel}: uploaded ${payloads.map((item) => item.name).join(', ')}.`, scene.id);
+    // Name the technique Flow accepted: on a page with no file input the run uses a
+    // drop or a paste, and that fact belongs in the log rather than in a guess.
+    const how = result?.strategy ? ` (via ${result.strategy})` : '';
+    await this.log('info', `Scene ${scene.numberLabel}: uploaded ${payloads.map((item) => item.name).join(', ')}${how}.`, scene.id);
   }
 
   /**

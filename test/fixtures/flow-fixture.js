@@ -45,6 +45,9 @@
  *                    input inside a custom element's SHADOW root, and the "Upload"
  *                    item only opens the OS dialog (which an extension cannot fill),
  *                    so the input must be found and filled without clicking it.
+ *   uploadByDrop     the measured live shape: NO file input exists at any point and
+ *                    the Add menu offers no usable upload item; the composer accepts
+ *                    dropped files instead (event.dataTransfer.files).
  *   cdkBackdrop      the Angular CDK shape: closing the menu leaves a full-page
  *                    .cdk-overlay-backdrop behind, and the next press on the
  *                    trigger is consumed dismissing it instead of opening the menu
@@ -97,6 +100,7 @@ export function installFlowFixture(
     modeIconRow = false,
     cdkBackdrop = false,
     uploadInShadow = false,
+    uploadByDrop = false,
   } = {},
 ) {
   const doc = window.document;
@@ -517,7 +521,12 @@ export function installFlowFixture(
   if (addBtn) {
     addBtn.addEventListener('click', () => {
       closePopover();
-      overlay.innerHTML = `
+      overlay.innerHTML = uploadByDrop
+        ? `
+        <div role="menu" aria-label="Add">
+          <button type="button" role="menuitem">Use from project</button>
+        </div>`
+        : `
         <div role="menu" aria-label="Add">
           <button type="button" role="menuitem" id="upload-item">Upload image</button>
           <button type="button" role="menuitem">Use from project</button>
@@ -552,7 +561,7 @@ export function installFlowFixture(
         doc.body.appendChild(host);
         mountFileInput(host.attachShadow({ mode: 'open' }));
       }
-      overlay.querySelector('#upload-item').addEventListener('click', () => {
+      overlay.querySelector('#upload-item')?.addEventListener('click', () => {
         // The live item opens the OS file dialog: nothing changes in the page.
         if (uploadInShadow) return;
         if (!doc.querySelector('input[type="file"]')) mountFileInput($('#prompt-box'));
@@ -634,6 +643,14 @@ export function installFlowFixture(
     attachComposer();
   }
   syncGenerate();
+  if (uploadByDrop) {
+    // The composer accepts dropped files, like the live page does.
+    const dropTarget = doc.getElementById('prompt-box') ?? doc.body;
+    dropTarget.addEventListener('drop', (event) => {
+      for (const file of Array.from(event.dataTransfer?.files ?? [])) addChip(file.name);
+    });
+  }
+
   // The live page names the trigger BUTTON "Settings trigger" and shows the value in
   // a child span: the accessible name is the control's name, not the chip's value.
   if (triggerNamedSettings && settingsBtn) settingsBtn.setAttribute('aria-label', 'Settings trigger');

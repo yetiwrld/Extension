@@ -80,3 +80,28 @@ test('a page with frames is searched without throwing (the frame list holds wrap
   assert.equal(result.attached, 1);
   assert.deepEqual(fixture.state.references, ['Aron.png']);
 });
+
+test('a composer with no file input anywhere accepts the reference by drag and drop', async () => {
+  // The measured live case: "No file input exists anywhere in the page, its shadow
+  // roots or its frames", and the Add menu offers no usable upload item. Flow's own
+  // "Upload" would raise the OS dialog, which an extension cannot fill.
+  const { window, fixture, adapter } = page({ uploadByDrop: true });
+  assert.equal(findFileInput(window.document), null);
+  const result = await adapter.attachReferences([file('Aron.png'), file('Vex.png')]);
+  assert.equal(result.strategy, 'drag and drop');
+  assert.equal(result.attached, 2);
+  assert.deepEqual(fixture.state.references, ['Aron.png', 'Vex.png']);
+});
+
+test('the failure lists every technique that was tried, in order', async () => {
+  const { adapter } = page({ variant: 'agent' });
+  await assert.rejects(
+    () => adapter.attachReferences([file('Aron.png')]),
+    (error) => {
+      assert.equal(error.code, 'REFERENCE_UPLOAD_FAILED');
+      assert.match(error.message, /Tried \u2014 .*drop on/);
+      assert.match(error.message, /paste into the prompt/);
+      return true;
+    },
+  );
+});
