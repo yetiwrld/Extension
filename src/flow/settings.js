@@ -224,6 +224,8 @@ export async function applyFlowSettings(ctx, target) {
 
 async function applyFlowSettingsOnce(ctx, target) {
   const trace = [];
+  /** Keys Flow does not expose in the active mode: reported, never faked. */
+  const notOffered = [];
   const prompt = requirePromptBox(ctx.doc);
   const chip = findDetectedSettings(ctx.doc, prompt.el);
   // Keys the chip already confirms need no interaction at all.
@@ -263,11 +265,20 @@ async function applyFlowSettingsOnce(ctx, target) {
         nested = await selectModel(ctx, popover, options, wanted, chip, prompt.el);
         changed = true;
       } else {
+        const available = options
+          .filter((option) => classifySettingOption(option, { chipModel: chip.model }) === key)
+          .map((option) => option.name);
+        // Flow does not expose this control in the active mode (measured: with
+        // ingredients attached its menu offers no Mode rows at all). A control that
+        // is not offered cannot be set — and must not fail the scene or be claimed
+        // as set: it is reported as not offered and left exactly as Flow has it.
+        if (!available.length) {
+          notOffered.push(key);
+          trace.push({ step: 'not-offered', detail: `Flow's menu offers no ${labelFor(key)} control here \u2014 left as Flow has it` });
+          continue;
+        }
         const match = options.find((option) => classifySettingOption(option, { chipModel: chip.model }) === key && sameName(option.name, wanted));
         if (!match) {
-          const available = options
-            .filter((option) => classifySettingOption(option, { chipModel: chip.model }) === key)
-            .map((option) => option.name);
           throw new AutomationError(
             ERROR_CODES.FLOW_SETTING_FAILED,
             `Flow does not offer "${wanted}" for ${labelFor(key)}.${available.length ? ` Available: ${available.join(', ')}.` : ''}`,
@@ -297,11 +308,12 @@ async function applyFlowSettingsOnce(ctx, target) {
     else await waitForClosed(ctx, popover);
   }
   const result = await readFlowSettings(ctx);
+  result.notOffered = notOffered;
   result.trace = [...trace, ...(result.trace ?? []), { step: 'final-read', detail: changed ? 're-read after changes' : 're-read to confirm' }];
   result.click = click;
   for (const key of SETTING_KEYS) {
     const wanted = target?.[key];
-    if (!wanted) continue;
+    if (!wanted || notOffered.includes(key)) continue;
     if (!valuesMatch(key, result.current[key] ?? '', wanted)) {
       throw new AutomationError(
         ERROR_CODES.FLOW_SETTING_FAILED,

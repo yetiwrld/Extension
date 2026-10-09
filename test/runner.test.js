@@ -480,3 +480,19 @@ test('resuming after attaching the references by hand uses them and continues th
     `the manual references were reused, not cleared or re-uploaded: ${JSON.stringify(uploadStep)}`,
   );
 });
+
+test('a scene is not failed because Flow offers no Mode control in the active mode', async () => {
+  // The live menu stops offering Mode rows once ingredients are attached. That is a
+  // control Flow does not expose — not a scene error, and never reported as applied.
+  const { runner, store, flow, logs } = await createRunner({
+    flowScript: { settings: { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9', outputs: 'x1' }, notOffered: ['mode'] },
+  });
+  await runner.start({ tabId: 1 });
+  await runner.whenIdle();
+  assert.equal(automationOf(store).phase, 'completed');
+  assert.ok(flow.state.submits.length >= 1, 'the scenes still generated');
+  assert.ok(
+    logs.some((entry) => entry.level === 'warn' && /offers no Mode control/i.test(entry.message)),
+    'the unavailable control is warned about, not hidden',
+  );
+});

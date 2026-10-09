@@ -610,7 +610,16 @@ export class AutomationRunner {
       const result = await this.applySceneSettings(target, scene);
       // A null result means the menu would not open but the chip already verified the
       // settings (logged as a warning): there is nothing further to verify.
+      const notOffered = result?.notOffered ?? [];
+      for (const key of notOffered) {
+        await this.log(
+          'warn',
+          `Scene ${scene?.numberLabel ?? ''}: Flow offers no ${SETTING_LABELS[key] ?? key} control in this mode; it was left as Flow has it.`.trim(),
+          scene?.id,
+        );
+      }
       for (const key of result ? Object.keys(target) : []) {
+        if (notOffered.includes(key)) continue;
         // Verify against what Flow reports after the change, never against what was requested.
         const actual = result?.current?.[key];
         if (actual !== target[key]) {

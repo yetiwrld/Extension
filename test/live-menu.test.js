@@ -396,3 +396,20 @@ test('a settings menu that cannot be opened reports the backdrop and aria-expand
     },
   );
 });
+
+test('a material-symbol ligature is never read as a Mode option', async () => {
+  // Measured live: with ingredients attached the menu carries <mat-icon>image</mat-icon>
+  // and no Mode rows. Reading that icon as an option made the apply step click it.
+  const { adapter } = fixturePage({ liveMenu: true, modeIconOnly: true });
+  const read = await adapter.readSettings();
+  assert.deepEqual(read.options.mode, [], 'no Mode options are invented from the icon');
+  assert.equal(read.current.mode, null, 'Mode is unknown, not "image"');
+});
+
+test('a setting Flow does not offer is reported, not clicked and not failed', async () => {
+  const { adapter, page } = fixturePage({ liveMenu: true, modeIconOnly: true });
+  const result = await adapter.applySettings({ mode: 'Image', aspectRatio: '9:16' });
+  assert.deepEqual(result.notOffered, ['mode'], 'Mode is reported as not offered');
+  assert.ok(result.trace.some((line) => line.step === 'not-offered' && /Mode/.test(line.detail)));
+  assert.equal(page.state.aspectRatio, '9:16', 'the settings Flow DOES offer were still applied');
+});

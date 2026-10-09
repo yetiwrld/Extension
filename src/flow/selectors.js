@@ -1524,6 +1524,20 @@ export function findSettingsMenu(doc, { exclude = null, chipModel = null } = {})
  * Each option also reports `submenu`: the item opens another menu (e.g. Flow's
  * "Select model family"), which the reader must inspect before choosing a model.
  */
+/**
+ * Is this element an icon rather than a label? Icon fonts put their ligature in the
+ * element's text, so the text alone cannot tell them apart — the element does:
+ * <mat-icon>, a material/google-symbols class, or anything marked role="img" /
+ * aria-hidden. Flow's own menu rows carry their label in a sibling element.
+ */
+function isIconElement(el) {
+  if (el.tagName === 'MAT-ICON' || el.tagName === 'I') return true;
+  if (el.getAttribute('role') === 'img') return true;
+  if (el.getAttribute('aria-hidden') === 'true' && !el.matches(INTERACTIVE_SELECTOR)) return true;
+  const classes = el.getAttribute('class') ?? '';
+  return /\b(material-symbols|material-icons|google-symbols|mat-icon)\b/.test(classes);
+}
+
 export function readPopoverOptions(popover) {
   const options = [];
   const seen = new Set();
@@ -1537,6 +1551,10 @@ export function readPopoverOptions(popover) {
   let currentGroup = null;
   for (const el of nodes) {
     if (el === popover || !isVisible(el)) continue;
+    // A material-symbol ligature renders as text ("image", "crop_16_9", "check"):
+    // it is the PICTURE next to an option, never an option. Reading it as one made
+    // the apply step click an icon and then find nothing to confirm.
+    if (isIconElement(el)) continue;
     const role = el.getAttribute('role');
     const isHeading = role === 'heading' || el.tagName === 'H2' || el.tagName === 'H3' || el.tagName === 'H4' || role === 'group';
     if (isHeading) {

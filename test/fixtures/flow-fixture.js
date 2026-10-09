@@ -48,6 +48,9 @@
  *   uploadByDrop     the measured live shape: NO file input exists at any point and
  *                    the Add menu offers no usable upload item; the composer accepts
  *                    dropped files instead (event.dataTransfer.files).
+ *   modeIconOnly     the measured live menu once ingredients are attached: NO Mode
+ *                    rows at all, only a <mat-icon> whose ligature text reads
+ *                    "image" (it must never be read, or clicked, as a Mode option).
  *   cdkBackdrop      the Angular CDK shape: closing the menu leaves a full-page
  *                    .cdk-overlay-backdrop behind, and the next press on the
  *                    trigger is consumed dismissing it instead of opening the menu
@@ -101,6 +104,7 @@ export function installFlowFixture(
     cdkBackdrop = false,
     uploadInShadow = false,
     uploadByDrop = false,
+    modeIconOnly = false,
   } = {},
 ) {
   const doc = window.document;
@@ -415,9 +419,8 @@ export function installFlowFixture(
       : '<div role="menu" aria-label="Generation settings" data-popover="settings">';
     overlay.innerHTML = `
       ${surface}
-        ${modeIconRow ? `<div${flowComponents ? '' : ' role="menuitemradio"'} data-key="modeIcon" data-value="image" aria-checked="true">image</div>` : ''}
-        ${liveRadio('mode', 'Image')}
-        ${liveRadio('mode', 'Video')}
+        ${modeIconRow || modeIconOnly ? '<mat-icon role="img" class="material-symbols">image</mat-icon>' : ''}
+        ${modeIconOnly ? '' : `${liveRadio('mode', 'Image')}\n        ${liveRadio('mode', 'Video')}`}
         ${liveRadio('aspectRatio', '16:9')}
         ${liveRadio('aspectRatio', '4:3')}
         ${liveRadio('aspectRatio', '1:1')}

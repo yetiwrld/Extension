@@ -159,7 +159,14 @@ export function scriptedFlow(script = {}) {
       // A locked setting models Flow refusing the change: the value Flow reports stays put.
       if (!script.lockedSettings) Object.assign(state.settings, target);
       Object.assign(state.settings, script.lockedSettings ?? {});
-      return { current: { ...state.settings }, options: structuredClone(state.options), strategy: 'scripted' };
+      // Keys the scripted page does not expose: applied values are left alone and the
+      // key is reported, exactly as the live menu does when a control is missing.
+      return {
+        current: { ...state.settings },
+        options: structuredClone(state.options),
+        strategy: 'scripted',
+        notOffered: script.notOffered ?? [],
+      };
     },
     async countReferences() {
       return { attached: state.attached.length, promptFound: true };
