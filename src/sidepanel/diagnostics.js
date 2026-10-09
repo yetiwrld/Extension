@@ -90,6 +90,28 @@ export function formatDiagnosticsReport(d) {
     }
   }
 
+  // Agent mode: the verified chip (button.agent-mode-chip + aria-pressed), the
+  // composer custom elements (existence AND visibility), and the classic settings
+  // trigger's hidden state — the facts that explain a settings click going nowhere.
+  const agent = d.agentMode;
+  if (agent) {
+    lines.push('', 'Agent mode (read-only inspection):');
+    lines.push(` - chip (button.agent-mode-chip): ${agent.chipFound ? `found, aria-pressed=${agent.chipPressed ? 'true (Agent mode is ON)' : 'false'}` : 'not found'}`);
+    const hostState = (host, hiddenWord) => (!host || !host.exists ? 'absent' : host.visible ? 'visible' : hiddenWord);
+    const hostParts = [];
+    if (agent.composerHosts?.classic) hostParts.push(`flow-prompt-box ${hostState(agent.composerHosts.classic, 'present but HIDDEN')}`);
+    if (agent.composerHosts?.agent) hostParts.push(`flow-creative-agent-prompt-box ${hostState(agent.composerHosts.agent, 'present but hidden')}`);
+    lines.push(` - composer: ${agent.composer ?? 'neither visible'}${hostParts.length ? ` (${hostParts.join(', ')})` : ''}`);
+    const button = d.composerArea?.settingsButton ?? d.settingsTrigger?.settingsButton;
+    if (button) {
+      lines.push(` - classic settings trigger (.settings-trigger-button): ${button.exists ? (button.hidden ? 'present but HIDDEN (display:none, not interactable)' : 'visible') : 'absent'}`);
+    }
+  }
+  const recovery = d.settingsRead?.agentModeRecovery;
+  if (recovery) {
+    lines.push(' - recovery: ' + (recovery.classicComposerBack ? 'Agent mode was left (chip clicked once, state verified, classic composer back)' : `Agent mode could NOT be left: ${recovery.reason}`));
+  }
+
   // The settings trigger: the expected button (the community reference's shape, as a
   // candidate), the actual control, and what covers it. Read-only evidence.
   const trigger = d.settingsTrigger;

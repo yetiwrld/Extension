@@ -333,3 +333,24 @@ test('the panel shows the settings trigger the extension clicks', () => {
   assert.match(html, /settings-trigger-button/, 'the control is named');
   assert.match(html, /visible: true, enabled: true/);
 });
+
+test('the panel shows the Agent mode state when the chip is pressed', () => {
+  const html = R.renderSettings(
+    { prefs: {}, automation: { phase: 'idle' } },
+    {
+      busy: false,
+      notice: null,
+      confirmStart: false,
+      logOpen: false,
+      diagnostics: {
+        checks: [],
+        agentMode: { chipFound: true, chipPressed: true, composer: 'agent', classicVisible: false, agentVisible: true },
+        detectedSettings: {},
+        settingsRead: { attempted: false },
+      },
+    },
+  );
+  assert.match(html, /Agent mode/);
+  assert.match(html, /button\.agent-mode-chip is pressed/);
+  assert.match(html, /leaves Agent mode automatically/);
+});

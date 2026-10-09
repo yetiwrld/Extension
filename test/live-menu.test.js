@@ -175,18 +175,38 @@ test('applySettings descends TWO levels when the model list shows families first
   assert.equal(page.state.model, 'Veo 3.1');
 });
 
-test('a selection the chip does not confirm is a FAILURE, not a success', async () => {
+test('a chip that does not confirm a selection is REPORTED, while the settings state decides', async () => {
+  // The chip text alone does not prove a setting: the menu's selected state is the
+  // settings state. When the two disagree, the change is verified by the menu and the
+  // chip mismatch is reported — never hidden, never silently trusted.
   const { adapter, page } = fixturePage({ liveMenu: true, chipStale: true });
+  const result = await adapter.applySettings({ aspectRatio: '4:3' });
+  assert.equal(result.current.aspectRatio, '4:3', 'the settings state shows 4:3 selected');
+  assert.equal(page.state.aspectRatio, '4:3', 'Flow did change');
+  assert.equal(result.aspectMatchesChip, false, 'the stale chip is reported as a mismatch');
+  assert.ok(
+    result.trace.some((line) => line.step === 'verified' && /the chip still shows a different value/.test(line.detail)),
+    'the trace reports the chip mismatch',
+  );
+  // When the settings state does NOT confirm the change, it is a FAILURE — the click
+  // alone never counts. (The row's own state update is neutered, so the menu keeps
+  // marking the old selection.)
+  const stuck = fixturePage({ liveMenu: true, chipStale: true });
+  stuck.window.document.addEventListener(
+    'click',
+    (event) => {
+      if (event.target.closest?.('[data-key="aspectRatio"]')) event.stopImmediatePropagation();
+    },
+    true,
+  );
   await assert.rejects(
-    () => adapter.applySettings({ aspectRatio: '4:3' }),
+    () => stuck.adapter.applySettings({ aspectRatio: '4:3' }),
     (error) => {
       assert.equal(error.code, 'FLOW_SETTING_FAILED');
-      assert.match(error.message, /model chip still shows/);
-      assert.match(error.message, /crop_16_9/, 'the error names the chip\u2019s actual text');
+      assert.match(error.message, /Flow still shows Aspect ratio "16:9" after selecting "4:3"/);
       return true;
     },
   );
-  assert.equal(page.state.aspectRatio, '4:3', 'Flow did change, but the report refuses to call it done');
 });
 
 test('a model Flow does not offer is refused with the real list', async () => {

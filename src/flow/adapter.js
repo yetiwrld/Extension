@@ -10,7 +10,10 @@ import {
   collectFrameDocs,
   collectPromptCandidates,
   countUnreachableFrames,
+  findAgentModeChip,
   findAgentToggle,
+  findComposerHosts,
+  composerHostSummaries,
   findDetectedSettings,
   findProgressIndicators,
   inspectComposerArea,
@@ -120,6 +123,20 @@ export function createFlowAdapter(options = {}) {
         );
       }
       const agent = guarded('agent toggle', () => (prompt ? findAgentToggle(doc, prompt.el) : null));
+      // Agent mode, from the verified chip (button.agent-mode-chip + aria-pressed) and
+      // the composer custom elements — existence is not enough, visibility is checked.
+      const agentMode = guarded('agent mode', () => {
+        const chip = findAgentModeChip(doc);
+        const hosts = findComposerHosts(doc);
+        return {
+          chipFound: Boolean(chip),
+          chipPressed: Boolean(chip?.pressed),
+          composer: hosts.classic?.visible ? 'classic' : hosts.agent?.visible ? 'agent' : null,
+          classicVisible: Boolean(hosts.classic?.visible),
+          agentVisible: Boolean(hosts.agent?.visible),
+          composerHosts: composerHostSummaries(hosts),
+        };
+      }, null);
       return {
         url: location?.href ?? '',
         flowPage,
@@ -163,8 +180,9 @@ export function createFlowAdapter(options = {}) {
         // tag/classes/name/rect, visibility, enabled state, what covers it, and
         // whether it is the control associated with the visible model chip.
         settingsTrigger: guarded('settings trigger', () => inspectSettingsTrigger(doc, prompt?.el ?? null), null),
-        agentOn: Boolean(agent?.on),
-        agentFound: Boolean(agent),
+        agentOn: Boolean(agentMode?.chipPressed || agent?.on),
+        agentFound: Boolean(agent || agentMode?.chipFound),
+        agentMode,
         composerLayout: prompt ? (agent?.on ? 'agent' : 'standard') : null,
         referencesAttached: guarded('references', () => (prompt ? countAttachedReferences(doc, prompt.el) : 0), 0),
         outputsVisible: guarded('outputs', () => takeOutputSnapshot(doc).outputKeys.length, 0),
@@ -237,7 +255,15 @@ export function createFlowAdapter(options = {}) {
         // A found control whose menu cannot be read is NOT ok: a failed capability
         // must be visible, not hidden behind a green check.
         check('Settings control', settingsRead.ok || (!settingsRead.attempted && probe.settingsFound), settingsControlDetail(probe, settingsRead)),
-        check('Agent mode', !probe.agentOn, probe.agentFound ? (probe.agentOn ? 'Agent is ON. Turn it off.' : 'Off.') : 'No agent control detected.'),
+        check(
+          'Agent mode',
+          !probe.agentMode?.chipPressed,
+          probe.agentMode?.chipPressed
+            ? 'Agent mode is ON (button.agent-mode-chip is pressed): the classic composer is hidden. The extension leaves Agent mode automatically before changing settings.'
+            : probe.agentMode?.composer === 'classic'
+              ? 'Off (the classic composer is active).'
+              : 'No agent-mode chip detected.',
+        ),
         check('Page checks', probe.issues.length === 0, probe.issues.length ? probe.issues.join('; ') : 'All page checks ran.'),
       ];
       return {

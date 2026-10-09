@@ -3,9 +3,12 @@ import { accessibleName, clickElement, clickOutside, isVisible, normalizeText, p
 import {
   classifySettingOption,
   diffSignatures,
+  findActiveComposerHost,
+  findAgentModeChip,
   findDetectedSettings,
   findModelChipText,
   findOpenPopover,
+  findPromptBox,
   findSettingsMenu,
   findSettingsTrigger,
   findSettingsTriggerWhenReady,
@@ -39,7 +42,88 @@ export const SETTING_KEYS = Object.freeze(['mode', 'model', 'aspectRatio', 'outp
  * @param {{doc: Document, sleep: (ms:number)=>Promise<void>, timings: {popoverMs: number, settleMs: number}}} ctx
  * @returns {Promise<{current: Record<SettingKey, string|null>, options: Record<SettingKey, string[]>, strategy: string}>}
  */
+/**
+ * Leave Flow's Agent mode safely, ONCE, and only when there is something to undo.
+ *
+ * The guard is the exact, state-guarded chip selector `button.agent-mode-chip[aria-pressed="true"]`:
+ * it can only match when Agent mode is on, so the recovery can never click a healthy
+ * composer INTO agent mode, and a generic `button[aria-pressed]` is never touched.
+ * After the click the state change is VERIFIED (aria-pressed flips, the classic
+ * composer returns and its prompt box and settings control become visible) before
+ * the caller retries anything. Agent mode is never claimed exited without that proof.
+ *
+ * @returns {Promise<{attempted: boolean, chipFound: boolean, pressed: boolean, clicked: boolean, stateChanged: boolean, classicComposerBack: boolean, reason: string}>}
+ */
+async function exitAgentMode(ctx) {
+  const chip = findAgentModeChip(ctx.doc);
+  if (!chip) return { attempted: false, chipFound: false, pressed: false, clicked: false, stateChanged: false, classicComposerBack: false, reason: 'chip not found' };
+  if (!chip.pressed) {
+    return { attempted: false, chipFound: true, pressed: false, clicked: false, stateChanged: false, classicComposerBack: false, reason: 'chip is not pressed (nothing to undo)' };
+  }
+  if (!chip.visible || !chip.enabled) {
+    return { attempted: true, chipFound: true, pressed: true, clicked: false, stateChanged: false, classicComposerBack: false, reason: `the chip is ${chip.visible ? 'disabled' : 'not visible'}, so the click is blocked` };
+  }
+  clickElement(chip.el);
+  const stateChanged = await waitForValue(() => {
+    const now = findAgentModeChip(ctx.doc);
+    return now && now.pressed === false ? true : null;
+  }, { timeoutMs: ctx.timings.popoverMs, intervalMs: 80, sleep: ctx.sleep });
+  const classicComposerBack = await waitForValue(() => {
+    const host = findActiveComposerHost(ctx.doc);
+    return host?.kind === 'classic' ? true : null;
+  }, { timeoutMs: ctx.timings.popoverMs, intervalMs: 80, sleep: ctx.sleep });
+  // The classic composer's own prompt box and settings control must be visible before retrying.
+  const controlsReady = await waitForValue(() => (findPromptBox(ctx.doc) ? true : null), {
+    timeoutMs: ctx.timings.popoverMs,
+    intervalMs: 80,
+    sleep: ctx.sleep,
+  });
+  const triggerReady = Boolean(findSettingsTrigger(ctx.doc, null));
+  return {
+    attempted: true,
+    chipFound: true,
+    pressed: true,
+    clicked: true,
+    stateChanged: Boolean(stateChanged),
+    classicComposerBack: Boolean(classicComposerBack && controlsReady && triggerReady),
+    reason: stateChanged ? (classicComposerBack ? 'left agent mode; the classic composer is back' : 'the chip flipped but the classic composer did not return') : 'the chip did not change state after the click',
+  };
+}
+
+/**
+ * Run a settings operation, recovering from Agent mode when it fails. The recovery
+ * runs AFTER the failure (probing first races the page's asynchronous mount), is
+ * attempted at most once, and is only reported as done when verified. When the chip
+ * was found pressed but could not be exited, the error names Agent mode explicitly
+ * instead of blaming selector drift.
+ */
+async function runWithAgentRecovery(ctx, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error?.code !== ERROR_CODES.FLOW_UI_CHANGED) throw error;
+    const recovery = await exitAgentMode(ctx);
+    if (!recovery.attempted || !recovery.stateChanged || !recovery.classicComposerBack) {
+      if (recovery.chipFound && recovery.pressed) {
+        throw new AutomationError(
+          ERROR_CODES.FLOW_AGENT_ON,
+          `Agent mode is on in Flow (button.agent-mode-chip is pressed) and the extension could not leave it: ${recovery.reason}. ` +
+            'Turn off Agent mode in Flow, then retry.',
+        );
+      }
+      throw error;
+    }
+    const result = await operation();
+    if (result && typeof result === 'object') result.agentModeRecovery = recovery;
+    return result;
+  }
+}
+
 export async function readFlowSettings(ctx) {
+  return runWithAgentRecovery(ctx, () => readFlowSettingsOnce(ctx));
+}
+
+async function readFlowSettingsOnce(ctx) {
   const prompt = requirePromptBox(ctx.doc);
   const trigger = await requireSettingsTrigger(ctx, prompt);
   const chip = findDetectedSettings(ctx.doc, prompt.el);
@@ -122,6 +206,10 @@ function chipText(chip) {
  * @param {Partial<Record<SettingKey, string>>} target
  */
 export async function applyFlowSettings(ctx, target) {
+  return runWithAgentRecovery(ctx, () => applyFlowSettingsOnce(ctx, target));
+}
+
+async function applyFlowSettingsOnce(ctx, target) {
   const trace = [];
   const prompt = requirePromptBox(ctx.doc);
   const chip = findDetectedSettings(ctx.doc, prompt.el);
@@ -186,7 +274,8 @@ export async function applyFlowSettings(ctx, target) {
       if (!verified.ok) {
         throw new AutomationError(ERROR_CODES.FLOW_SETTING_FAILED, verified.message);
       }
-      trace.push({ step: 'verified', detail: `${labelFor(key)} "${wanted}" confirmed by ${key === 'mode' ? 'the menu' : 'the model chip'}` });
+      const chipNote = verified.chipMatches === false ? ' — the chip still shows a different value (reported)' : '';
+      trace.push({ step: 'verified', detail: `${labelFor(key)} "${wanted}" confirmed by the settings state${chipNote}` });
     }
   } finally {
     // A menu that stays open would block the next step; close it either way.
@@ -273,33 +362,38 @@ async function selectModel(ctx, popover, options, wanted, chip, promptEl) {
 }
 
 /**
- * Verify one selection against observable UI state. The model chip is the ground
- * truth for model, aspect ratio and output count (it shows all three); mode is not
- * on the chip, so it is verified by re-reading the menu's selected option (opening
- * the menu again when the choice closed it).
+ * Verify one selection against observable UI state. PRIMARY: the settings state
+ * itself — the menu's selected option (the chip text alone does not prove the
+ * setting, e.g. the aspect ratio). FALLBACK: the model chip for what it shows
+ * (the model, once its nested list has closed). The chip is always re-read and
+ * cross-checked, so a disagreement is reported, never hidden.
  */
 async function verifySetting(ctx, key, wanted, prompt) {
   const chip = findDetectedSettings(ctx.doc, prompt.el);
   const chipValue = key === 'model' ? chip.model : key === 'aspectRatio' ? chip.aspectRatio : key === 'outputs' ? chip.outputs : null;
+  // 1) The settings state: what the menu marks as selected.
+  const verdict = await readSelectedFromMenu(ctx, key, wanted, prompt);
+  if (verdict.marked) {
+    if (verdict.ok) {
+      return { ok: true, chipValue, chipMatches: chipValue ? sameName(chipValue, wanted) : null };
+    }
+    return {
+      ok: false,
+      message: `Flow still shows ${labelFor(key)} "${verdict.actual}" after selecting "${wanted}" (model chip: "${rawChipText(ctx, prompt) ?? 'unknown'}").`,
+    };
+  }
+  // 2) The menu marks nothing: the chip is the observable state.
   if (chipValue) {
-    if (sameName(chipValue, wanted)) return { ok: true };
+    if (sameName(chipValue, wanted)) return { ok: true, chipValue, chipMatches: true };
     return {
       ok: false,
       message: `Flow's model chip still shows "${rawChipText(ctx, prompt) ?? chipText(chip)}" after selecting ${labelFor(key)} "${wanted}" (it shows ${key} "${chipValue}").`,
     };
   }
-  // The chip does not show this setting (mode): verify in the menu.
-  const verdict = await readSelectedFromMenu(ctx, key, wanted, prompt);
-  if (!verdict.ok) {
-    const raw = rawChipText(ctx, prompt);
-    return {
-      ok: false,
-      message: verdict.actual
-        ? `Flow still shows ${labelFor(key)} "${verdict.actual}" after selecting "${wanted}" (model chip: "${raw ?? 'unknown'}").`
-        : `Flow does not mark ${labelFor(key)} "${wanted}" as selected after clicking it (model chip: "${raw ?? 'unknown'}").`,
-    };
-  }
-  return { ok: true };
+  return {
+    ok: false,
+    message: `Neither the settings menu nor the model chip confirms ${labelFor(key)} "${wanted}" after selecting it (model chip: "${rawChipText(ctx, prompt) ?? 'unknown'}").`,
+  };
 }
 
 /** The chip's raw text at this moment, for error messages that must be verifiable. */
@@ -321,8 +415,10 @@ async function readSelectedFromMenu(ctx, key, wanted, prompt) {
     const options = readPopoverOptions(menu);
     const chip = findDetectedSettings(ctx.doc, prompt.el);
     const selected = options.find((option) => classifySettingOption(option, { chipModel: chip.model }) === key && option.selected);
-    if (!selected) return { ok: false, actual: null };
-    return sameName(selected.name, wanted) ? { ok: true, actual: selected.name } : { ok: false, actual: selected.name };
+    if (!selected) return { marked: false, ok: false, actual: null };
+    return sameName(selected.name, wanted)
+      ? { marked: true, ok: true, actual: selected.name }
+      : { marked: true, ok: false, actual: selected.name };
   } finally {
     if (opened) await closePopover(ctx, menu);
   }

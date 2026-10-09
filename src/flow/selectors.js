@@ -25,6 +25,23 @@ const ADD_NAME = /^(?:[a-z_]+\s+)?(add|attach|upload|\+)(?:\s|$)/i;
 const REMOVE_NAME = /(remove|delete|clear|close|dismiss)/i;
 const AGENT_NAME = /\bagent\b/i;
 const ASPECT_RATIO_TEXT = /^\d{1,2}\s*:\s*\d{1,2}$/;
+/**
+ * Flow's Agent-mode chip. PRESSED (`aria-pressed="true"`) means Agent mode is on:
+ * Flow then swaps the classic composer (`flow-prompt-box`) for
+ * `flow-creative-agent-prompt-box` and puts a bare `hidden` on the classic
+ * `.settings-trigger-button` (display:none, 0x0, never hit-testable) — which is why
+ * clicking the old settings trigger changes nothing. The class + aria-pressed carry
+ * the chip's identity in every locale (verified against the live DOM by an
+ * independent automation project), so no translated label is used.
+ */
+const AGENT_CHIP_SELECTOR = 'button.agent-mode-chip';
+const AGENT_CHIP_PRESSED_SELECTOR = 'button.agent-mode-chip[aria-pressed="true"]';
+/** The classic (standard) composer custom elements. */
+const CLASSIC_COMPOSER_TAGS = ['flow-prompt-box', 'flow-base-prompt-box'];
+/** The Agent-mode composer that replaces the classic one while the chip is pressed. */
+const AGENT_COMPOSER_TAG = 'flow-creative-agent-prompt-box';
+/** The classic settings trigger's class (it stays in the DOM, hidden, in Agent mode). */
+const SETTINGS_TRIGGER_CLASS = 'settings-trigger-button';
 /** Output-count options as Flow shows them in the settings menu and on the chip ("x1"…"x4"). */
 const OUTPUT_TEXT = /^x\s?\d{1,2}$/i;
 /**
@@ -758,9 +775,21 @@ export function collectModelNamedControls(scope, { interactiveOnly = false, limi
  */
 export function findSettingsTrigger(doc, promptEl) {
   const region = findPromptRegion(promptEl) ?? doc;
-  // Shadow-aware and deep: Flow's composer is built from custom elements
-  // (flow-base-prompt-box …), so the trigger can sit two shadow levels down.
-  const regionControls = deepControlsWithin(region);
+  // The ACTIVE composer wins: in Agent mode the classic composer is hidden and the
+  // prompt box may be found in the Agent composer, whose controls do not open the
+  // generation settings. Search the visible classic composer first, then the prompt's
+  // own region, then the document (model-named interactive controls only).
+  const activeHost = findActiveComposerHost(doc);
+  const scopes = [];
+  if (activeHost?.visible) scopes.push(activeHost.el ?? null);
+  scopes.push(region);
+  const seenScopes = new Set();
+  const regionControls = [];
+  for (const scope of scopes) {
+    if (!scope || seenScopes.has(scope)) continue;
+    seenScopes.add(scope);
+    for (const control of deepControlsWithin(scope)) regionControls.push(control);
+  }
   const inRegionList = [
     ...regionControls.map((el) => ({ el, rank: settingsTriggerRank(el) })),
     // The community reference's shape: a button whose class names it as the settings trigger.
@@ -891,6 +920,12 @@ function customAncestorsOf(el, limit = 6) {
   return out;
 }
 
+/** The Agent-mode chip's state for diagnostics: found / pressed / visible / enabled. */
+function chipState(doc) {
+  const chip = findAgentModeChip(doc);
+  return chip ? { exists: true, pressed: chip.pressed, visible: chip.visible, enabled: chip.enabled, name: chip.name } : { exists: false, pressed: false, visible: false, enabled: false, name: '' };
+}
+
 /**
  * Inspect the settings trigger for the "Check Flow page" report: whether the expected
  * settings button exists (the community reference's shape, as a CANDIDATE), the actual
@@ -902,6 +937,7 @@ export function inspectSettingsTrigger(doc, promptEl) {
   const trigger = findSettingsTrigger(doc, promptEl);
   const chip = promptEl ? findDetectedSettings(doc, promptEl) : { model: null };
   const control = trigger?.el ?? null;
+  const hosts = findComposerHosts(doc);
   const report = {
     found: Boolean(trigger),
     strategy: trigger?.strategy ?? null,
@@ -912,6 +948,10 @@ export function inspectSettingsTrigger(doc, promptEl) {
     associatedWithChip: null,
     coveredBy: null,
     customAncestors: control ? customAncestorsOf(control) : [],
+    composer: hosts.classic?.visible ? 'classic' : hosts.agent?.visible ? 'agent' : null,
+    composerHosts: composerHostSummaries(hosts),
+    agentChip: chipState(doc),
+    settingsButton: findSettingsTriggerButton(doc),
   };
   if (control) {
     const rect = control.getBoundingClientRect?.();
@@ -1112,7 +1152,15 @@ export function inspectComposerArea(doc) {
     regionControls: [],
     generateCandidates: [],
     shadowHosts: [],
+    composerHosts: composerHostSummaries(findComposerHosts(doc)),
+    agentChip: null,
+    settingsButton: null,
   };
+  const chipState = findAgentModeChip(doc);
+  if (chipState) {
+    area.agentChip = { exists: true, pressed: chipState.pressed, visible: chipState.visible, enabled: chipState.enabled, name: chipState.name };
+  }
+  area.settingsButton = findSettingsTriggerButton(doc);
   if (chip) {
     const rect = chip.el.getBoundingClientRect?.();
     area.chip = {
@@ -1506,6 +1554,97 @@ export function classifySettingOption(option, { chipModel = null } = {}) {
 /** True for the item that opens the (nested) model list rather than a model itself. */
 export function isModelSubmenuTrigger(option) {
   return Boolean(option) && (option.submenu || MODEL_SUBMENU_NAME.test(option.name ?? ''));
+}
+
+/**
+ * Flow's Agent-mode chip, found by its component class and state — never by a
+ * translated label. Returns `{ el, pressed, visible, enabled, name }` or null.
+ * `pressed` is read from `aria-pressed`, so the chip is only ever reported as
+ * active when there is actually something to undo.
+ */
+export function findAgentModeChip(doc) {
+  let best = null;
+  for (const scope of collectMenuScopes(doc)) {
+    for (const el of scope.querySelectorAll(AGENT_CHIP_SELECTOR)) {
+      const chip = {
+        el,
+        pressed: el.getAttribute('aria-pressed') === 'true',
+        visible: isVisible(el),
+        enabled: !isDisabled(el),
+        name: accessibleName(el).slice(0, 40),
+      };
+      if (!best || (chip.visible && !best.visible)) best = chip;
+    }
+  }
+  return best;
+}
+
+/** True when the EXACT, state-guarded Agent-mode chip is pressed (something to undo). */
+export function isAgentModeOn(doc) {
+  for (const scope of collectMenuScopes(doc)) {
+    if (scope.querySelector(AGENT_CHIP_PRESSED_SELECTOR)) return true;
+  }
+  return false;
+}
+
+/**
+ * The composer custom elements and their visibility: the classic composer
+ * (`flow-prompt-box` / `flow-base-prompt-box`) and the Agent-mode composer that
+ * replaces it while the chip is pressed. Existence alone proves nothing —
+ * visibility and dimensions are checked too.
+ */
+export function findComposerHosts(doc) {
+  const find = (tags) => {
+    for (const scope of collectMenuScopes(doc)) {
+      for (const el of scope.querySelectorAll(tags.join(','))) {
+        if (isVisible(el)) return { exists: true, visible: true, tag: el.tagName.toLowerCase(), el };
+      }
+    }
+    for (const scope of collectMenuScopes(doc)) {
+      for (const el of scope.querySelectorAll(tags.join(','))) {
+        return { exists: true, visible: false, tag: el.tagName.toLowerCase(), el };
+      }
+    }
+    return { exists: false, visible: false, tag: null, el: null };
+  };
+  return { classic: find(CLASSIC_COMPOSER_TAGS), agent: find([AGENT_COMPOSER_TAG]) };
+}
+
+/** Clone-safe composer-host summaries (no elements cross the message boundary). */
+export function composerHostSummaries(hosts) {
+  const map = (host) => (host ? { exists: host.exists, visible: host.visible, tag: host.tag } : null);
+  return { classic: map(hosts?.classic), agent: map(hosts?.agent) };
+}
+
+/** The active composer: the classic one when visible, else the Agent-mode one. */
+export function findActiveComposerHost(doc) {
+  const hosts = findComposerHosts(doc);
+  if (hosts.classic.visible) return { ...hosts.classic, kind: 'classic' };
+  if (hosts.agent.visible) return { ...hosts.agent, kind: 'agent' };
+  return null;
+}
+
+/**
+ * The classic settings trigger button (`.settings-trigger-button`) and whether it
+ * is hidden. In Agent mode it stays in the DOM with a bare `hidden` attribute
+ * (display:none, 0x0) — present but impossible to interact with.
+ */
+export function findSettingsTriggerButton(doc) {
+  for (const scope of collectMenuScopes(doc)) {
+    for (const el of scope.querySelectorAll(`.${SETTINGS_TRIGGER_CLASS}`)) {
+      const rect = el.getBoundingClientRect?.();
+      return {
+        exists: true,
+        hidden: el.hidden || el.getAttribute('hidden') != null || !isVisible(el),
+        visible: isVisible(el),
+        rect: rect && (rect.width || rect.height) ? { width: Math.round(rect.width), height: Math.round(rect.height) } : null,
+        tag: el.tagName.toLowerCase(),
+        classes: (el.getAttribute('class') ?? '').slice(0, 80),
+        name: accessibleName(el).slice(0, 60),
+      };
+    }
+  }
+  return { exists: false, hidden: null, visible: false, rect: null, tag: null, classes: '', name: '' };
 }
 
 /** Agent switch in the prompt box. Returns { el, on } or null. */

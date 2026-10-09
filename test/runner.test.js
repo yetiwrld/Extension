@@ -252,13 +252,17 @@ test('a lost Flow tab pauses the queue (it does not fail the scene)', async () =
   assert.equal(flow.state.submits.length, 0);
 });
 
-test('Agent mode on blocks the run before any scene is submitted', async () => {
-  const { runner, store, flow } = await createRunner({ flowScript: { agentOn: true } });
+test('Agent mode on is reported and the run proceeds (the settings read recovers on the real page)', async () => {
+  const { runner, store, flow, logs } = await createRunner({ flowScript: { agentOn: true } });
   await runner.start({ tabId: 1 });
   await runner.whenIdle();
-  assert.equal(automationOf(store).phase, 'paused');
-  assert.equal(automationOf(store).decision.type, 'agent-on');
-  assert.equal(flow.state.submits.length, 0);
+  // The runner no longer hard-stops on Agent mode: the adapter's settings read leaves
+  // Agent mode itself (verified recovery, covered by the adapter tests). The probe's
+  // report still names the state so the log shows where the session started.
+  const messages = logs.map((entry) => entry.message);
+  assert.ok(messages.some((message) => /Agent control is on|Agent mode is on/.test(message)), JSON.stringify(messages));
+  assert.equal(automationOf(store).phase, 'completed');
+  assert.ok(flow.state.submits.length > 0, 'scenes ran after the settings read succeeded');
 });
 
 test('completed scenes are never generated again by starting the queue', async () => {

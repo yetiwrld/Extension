@@ -35,6 +35,14 @@
  *                    flow-generate-icon-button with button.generate-icon-button,
  *                    and a settings menu rendered in a PORTAL at the body level
  *                    with NO ARIA roles (content-based detection must find it)
+ *   agentMode        the migrated Agent-mode state: flow-prompt-box stays in the DOM
+ *                    with a HIDDEN .settings-trigger-button (display:none, never
+ *                    hit-testable), flow-creative-agent-prompt-box is the visible
+ *                    composer with its own prompt, a visible model chip that opens
+ *                    NOTHING, and button.agent-mode-chip[aria-pressed="true"].
+ *                    Clicking the chip leaves Agent mode: the classic composer and
+ *                    its settings trigger return. agentChipStuck makes the click a
+ *                    no-op (the recovery must then report, not claim success).
  */
 
 export const FIXTURE_CATALOG = Object.freeze({
@@ -70,6 +78,8 @@ export function installFlowFixture(
     liveMenuDeep = false,
     chipStale = false,
     flowComponents = false,
+    agentMode = false,
+    agentChipStuck = false,
   } = {},
 ) {
   const doc = window.document;
@@ -134,7 +144,7 @@ export function installFlowFixture(
     </main>`;
 
   const $ = (sel) => doc.querySelector(sel);
-  const slot = $('#prompt-slot');
+  let slot = $('#prompt-slot');
   let generateBtn = $('#generate');
   let settingsBtn = $('#settings-btn');
   let addBtn = $('#add-btn');
@@ -187,9 +197,83 @@ export function installFlowFixture(
     syncGenerate();
   }
 
+  // ---------------------------------------------------------------------------
+  // The migrated Agent-mode state: the classic composer stays in the DOM with a
+  // HIDDEN settings trigger; flow-creative-agent-prompt-box is the visible composer
+  // and carries button.agent-mode-chip[aria-pressed="true"]. Clicking the chip leaves
+  // Agent mode and the classic composer (and its settings trigger) return.
+  // ---------------------------------------------------------------------------
+  let agentChipClicks = 0;
+  if (agentMode) {
+    doc.body.innerHTML = `
+    <main>
+      <header class="top"><button type="button" aria-label="Create new project">New project</button>${gear}</header>
+      <section class="results" id="results" aria-label="Results"></section>
+      <flow-prompt-box id="classic-box" hidden>
+        <div class="prompt-box" id="prompt-box">
+          <div class="refs" id="refs"></div>
+          <div class="controls-row">
+            <button type="button" id="add-btn" aria-haspopup="menu">+ Add</button>
+            <button type="button" id="settings-btn" class="settings-trigger-button" hidden aria-haspopup="menu" aria-expanded="false"><span class="model-chip">${chipText()}</span></button>
+            <button type="button" id="agent" role="switch" aria-checked="false">Agent</button>
+          </div>
+          <div id="prompt-slot"></div>
+          <button type="button" id="generate" aria-label="Generate"><span class="material-symbols">arrow_forward</span> Generate</button>
+        </div>
+      </flow-prompt-box>
+      <flow-creative-agent-prompt-box id="agent-box">
+        <div class="agent-composer">
+          <div id="agent-prompt" contenteditable="true" role="textbox" aria-placeholder="Ask the agent to create something"></div>
+          <span class="model-chip" id="agent-chip-label">${chipText()}</span>
+          <div class="agent-footer-actions">
+            <button type="button" class="agent-action-button" aria-label="Settings"><span class="material-symbols">tune</span></button>
+          </div>
+          <button type="button" class="agent-mode-chip" id="agent-mode-chip" aria-pressed="true" aria-label="Agent">Agent</button>
+        </div>
+      </flow-creative-agent-prompt-box>
+      <div id="overlay-root"></div>
+    </main>`;
+    // Re-resolve the document-level elements (body.innerHTML was replaced).
+    overlay = doc.getElementById('overlay-root');
+    resultsEl = doc.getElementById('results');
+    refsEl = doc.getElementById('refs');
+    slot = doc.getElementById('prompt-slot');
+    settingsBtn = doc.getElementById('settings-btn');
+    generateBtn = doc.getElementById('generate');
+    addBtn = doc.getElementById('add-btn');
+    agentBtn = doc.getElementById('agent');
+    promptEl = doc.getElementById('agent-prompt');
+    const classicBox = doc.getElementById('classic-box');
+    const agentBox = doc.getElementById('agent-box');
+    const chip = doc.getElementById('agent-mode-chip');
+    const agentLabel = doc.getElementById('agent-chip-label');
+    promptEl.addEventListener('input', syncGenerate);
+    promptEl.addEventListener('keyup', syncGenerate);
+    chip.addEventListener('click', () => {
+      agentChipClicks += 1;
+      if (agentChipStuck) return; // the click is a no-op: the recovery must report
+      chip.setAttribute('aria-pressed', 'false');
+      agentBox.hidden = true;
+      classicBox.hidden = false;
+      settingsBtn.hidden = false;
+      settingsBtn.setAttribute('aria-expanded', 'false');
+      attachComposer();
+      promptEl = $('#prompt');
+      promptEl.addEventListener('input', syncGenerate);
+      promptEl.addEventListener('keyup', syncGenerate);
+      syncGenerate();
+    });
+    // The visible model chip in the AGENT composer opens NOTHING (the live failure).
+    agentLabel.addEventListener('click', () => {});
+    // Expose the click counter for the recovery tests.
+    state.agentChipClicks = () => agentChipClicks;
+  }
+
   /** Insert the composer for this variant (standard layouts) and wire its events. */
   function attachComposer() {
     if (agentLayout || flowComponents) return; // the composer is already in place
+    // Agent mode: the classic composer is hidden; attach only once it returns.
+    if (agentMode && doc.getElementById('classic-box')?.hidden) return;
     slot.innerHTML = COMPOSER_HTML[variant] ?? COMPOSER_HTML.textarea;
     promptEl = $('#prompt');
     if (!promptEl) return;

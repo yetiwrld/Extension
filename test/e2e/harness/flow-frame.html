@@ -36,7 +36,7 @@
     <script type="module">
       import { installFlowFixture } from '/fixture/flow-fixture.js';
       const options = { variant: location.hash === '#rich' ? 'contenteditable' : 'textarea' };
-      for (const flag of ['chipPlain', 'gearMenu', 'chipOpensViewMenu', 'chipDead', 'liveMenu', 'liveMenuDeep', 'chipStale', 'flowComponents']) {
+      for (const flag of ['chipPlain', 'gearMenu', 'chipOpensViewMenu', 'chipDead', 'liveMenu', 'liveMenuDeep', 'chipStale', 'flowComponents', 'agentMode', 'agentChipStuck']) {
         if (location.hash.includes(flag)) options[flag] = true;
       }
       const fixture = installFlowFixture(window, options);

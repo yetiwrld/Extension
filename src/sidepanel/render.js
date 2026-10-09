@@ -452,6 +452,16 @@ function renderDiagnosticsExtras(diagnostics) {
         `${trigger.control ? `<${trigger.control.tag}${trigger.control.classes ? ` class="${trigger.control.classes}"` : ''}>` : ''} "${trigger.label ?? ''}"${trigger.control ? ` · visible: ${trigger.control.visible}, enabled: ${trigger.control.enabled}` : ''}`,
       )}</span></span></div>`
     : '';
+  // Agent mode: the verified chip state — the fact that explains a dead settings click.
+  const agent = diagnostics.agentMode;
+  const agentLine =
+    agent?.chipPressed || agent?.composer === 'agent'
+      ? `<div class=\"check\"><span class=\"check-icon\">\u26a0</span><span><span class=\"check-label\">Agent mode</span> <span class=\"check-detail\">${esc(
+          agent.chipPressed
+            ? 'ON (button.agent-mode-chip is pressed): the classic composer is hidden. The extension leaves Agent mode automatically before changing settings.'
+            : 'the Agent-mode composer is active.',
+        )}</span></span></div>`
+      : '';
   // The settings-read attempt: which control was clicked, whether the menu opened.
   const read = diagnostics.settingsRead;
   const readLine = read?.attempted
@@ -520,7 +530,7 @@ function renderDiagnosticsExtras(diagnostics) {
         )
         .join('')}</ul></details>`
     : '';
-  return `${detectedLine}${chipLine}${triggerLine}${readLine}${framesLine}${selectorsBlock}${candidatesBlock}${controlsBlock}${exceptionsBlock}
+  return `${detectedLine}${chipLine}${agentLine}${triggerLine}${readLine}${framesLine}${selectorsBlock}${candidatesBlock}${controlsBlock}${exceptionsBlock}
     <div class="row"><button type="button" class="btn btn-secondary btn-sm" data-action="copy-diagnostics">Copy report</button></div>`;
 }
 

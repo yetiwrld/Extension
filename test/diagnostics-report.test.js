@@ -421,3 +421,59 @@ test('the report carries the settings-trigger inspection, the click evidence and
   assert.match(text, / - trigger-found: settings-trigger-aria-haspopup/);
   assert.match(text, / - menu-opened: popover detected after clicking button\.settings-trigger-button/);
 });
+
+test('the report carries the Agent-mode inspection and the recovery outcome', () => {
+  const text = formatDiagnosticsReport({
+    ...REPORT,
+    agentMode: {
+      chipFound: true,
+      chipPressed: true,
+      composer: 'agent',
+      classicVisible: false,
+      agentVisible: true,
+      composerHosts: {
+        classic: { exists: true, visible: false, tag: 'flow-prompt-box' },
+        agent: { exists: true, visible: true, tag: 'flow-creative-agent-prompt-box' },
+      },
+    },
+    composerArea: { settingsButton: { exists: true, hidden: true, visible: false, rect: null, tag: 'button', classes: 'settings-trigger-button', name: '' } },
+    settingsTrigger: { settingsButton: { exists: true, hidden: true, visible: false, rect: null, tag: 'button', classes: 'settings-trigger-button', name: '' } },
+    settingsRead: {
+      attempted: true,
+      ok: true,
+      current: { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9', outputs: 'x1' },
+      options: {},
+      chipModel: 'Nano Banana 2.1',
+      agentModeRecovery: {
+        attempted: true,
+        chipFound: true,
+        pressed: true,
+        clicked: true,
+        stateChanged: true,
+        classicComposerBack: true,
+        reason: 'left agent mode; the classic composer is back',
+      },
+    },
+  });
+  assert.match(text, /Agent mode \(read-only inspection\):/);
+  assert.match(text, / - chip \(button\.agent-mode-chip\): found, aria-pressed=true \(Agent mode is ON\)/);
+  assert.match(text, / - composer: agent \(flow-prompt-box present but HIDDEN, flow-creative-agent-prompt-box visible\)/);
+  assert.match(text, / - classic settings trigger \(\.settings-trigger-button\): present but HIDDEN \(display:none, not interactable\)/);
+  assert.match(text, / - recovery: Agent mode was left \(chip clicked once, state verified, classic composer back\)/);
+});
+
+test('the report names Agent mode when the recovery could not leave it', () => {
+  const text = formatDiagnosticsReport({
+    ...REPORT,
+    agentMode: { chipFound: true, chipPressed: true, composer: 'agent', classicVisible: false, agentVisible: true, composerHosts: null },
+    settingsRead: {
+      attempted: true,
+      ok: false,
+      error: 'Agent mode is on in Flow (button.agent-mode-chip is pressed) and the extension could not leave it: the chip did not change state after the click. Turn off Agent mode in Flow, then retry.',
+      code: 'FLOW_AGENT_ON',
+      agentModeRecovery: { attempted: true, chipFound: true, pressed: true, clicked: true, stateChanged: false, classicComposerBack: false, reason: 'the chip did not change state after the click' },
+    },
+  });
+  assert.match(text, / - recovery: Agent mode could NOT be left: the chip did not change state after the click/);
+  assert.match(text, / - FAILED \(FLOW_AGENT_ON\): Agent mode is on in Flow/);
+});

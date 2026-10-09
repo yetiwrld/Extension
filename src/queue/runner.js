@@ -421,11 +421,13 @@ export class AutomationRunner {
     try {
       await this.log('info', 'Checking the Flow connection\u2026');
       const probe = await this.flow.probe();
-      if (probe.agentOn) {
-        throw new AutomationError(
-          ERROR_CODES.FLOW_AGENT_ON,
-          'Agent is on in the Flow prompt box. Turn it off so each scene goes to the standard prompt box.',
-        );
+      // Agent mode no longer blocks the run: the settings read leaves Agent mode
+      // itself (verified recovery) when it would otherwise fail. Report it here so
+      // the log shows the state the session started in.
+      if (probe.agentMode?.chipPressed) {
+        await this.log('info', 'Agent mode is on in Flow (button.agent-mode-chip is pressed). The settings read will leave it before proceeding.');
+      } else if (probe.agentOn) {
+        await this.log('warn', 'An Agent control is on in the Flow prompt box. The settings read will leave Agent mode if it blocks the settings.');
       }
       if (!probe.promptFound) {
         throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found. Open a project and make sure the prompt box is visible.');
@@ -577,8 +579,10 @@ export class AutomationRunner {
 
   async stepPrepare(scene) {
     const probe = await this.flow.probe();
-    if (probe.agentOn) {
-      throw new AutomationError(ERROR_CODES.FLOW_AGENT_ON, 'Agent is on in the Flow prompt box. Turn it off, then Resume.');
+    // Agent mode is handled by the settings read's verified recovery; it is reported,
+    // not a hard stop, so a recovered session can continue.
+    if (probe.agentMode?.chipPressed) {
+      await this.log('info', `Scene ${scene.numberLabel}: Agent mode is on in Flow. The settings step will leave it if needed.`, scene.id);
     }
     if (!probe.promptFound) {
       throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found. Keep the project open and visible.');
