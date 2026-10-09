@@ -11,6 +11,7 @@ import {
   findPromptBox,
   findSettingsTrigger,
   isGenerateEnabled,
+  listPromptControls,
 } from './selectors.js';
 import { accessibleName, clickElement, normalizeText } from './dom.js';
 
@@ -76,6 +77,11 @@ export function createFlowAdapter(options = {}) {
         generateEnabled: guarded('Generate state', () => (generate ? isGenerateEnabled(generate.el) : false), false),
         settingsFound: Boolean(trigger),
         settingsStrategy: trigger?.strategy ?? null,
+        // When the settings control is missing, name the controls that ARE near the prompt,
+        // so the "Check Flow page" report says what the page offers instead of only "Not found".
+        settingsCandidates: trigger
+          ? []
+          : guarded('prompt controls', () => (prompt ? listPromptControls(doc, prompt.el) : []), []),
         agentOn: Boolean(agent?.on),
         agentFound: Boolean(agent),
         referencesAttached: guarded('references', () => (prompt ? countAttachedReferences(doc, prompt.el) : 0), 0),
@@ -92,7 +98,7 @@ export function createFlowAdapter(options = {}) {
         check('Project open', probe.isProjectPage, probe.isProjectPage ? 'URL is a project page.' : 'Open a project (URL contains /project/).'),
         check('Prompt box', probe.promptFound, probe.promptFound ? `Found (${probe.promptStrategy}).` : 'Not found. The prompt box is required.'),
         check('Generate button', probe.generateFound, probe.generateFound ? `Found (${probe.generateStrategy}), ${probe.generateEnabled ? 'enabled' : 'disabled'}.` : 'Not found.'),
-        check('Settings control', probe.settingsFound, probe.settingsFound ? `Found (${probe.settingsStrategy}).` : 'Not found.'),
+        check('Settings control', probe.settingsFound, probe.settingsFound ? `Found (${probe.settingsStrategy}).` : settingsNotFoundDetail(probe.settingsCandidates)),
         check('Agent mode', !probe.agentOn, probe.agentFound ? (probe.agentOn ? 'Agent is ON. Turn it off.' : 'Off.') : 'No agent control detected.'),
         check('Page checks', probe.issues.length === 0, probe.issues.length ? probe.issues.join('; ') : 'All page checks ran.'),
       ];
@@ -177,5 +183,14 @@ export async function handleFlowCommand(adapter, command, payload) {
 
 function check(label, ok, detail) {
   return { label, ok: Boolean(ok), detail: normalizeText(detail) };
+}
+
+/** When the settings control is missing, name the controls that are near the prompt box. */
+function settingsNotFoundDetail(candidates) {
+  if (!candidates?.length) return 'Not found. No buttons or menu triggers are visible near the prompt box.';
+  const list = candidates
+    .map((control) => `${control.tag}${control.role ? `[${control.role}]` : ''}${control.popup ? `[${control.popup}]` : ''} "${control.name}"`)
+    .join('; ');
+  return `Not found. Controls near the prompt: ${list}.`;
 }
 

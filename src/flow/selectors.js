@@ -18,6 +18,15 @@ const ADD_NAME = /^(?:[a-z_]+\s+)?(add|attach|upload|\+)(?:\s|$)/i;
 const REMOVE_NAME = /(remove|delete|clear|close|dismiss)/i;
 const AGENT_NAME = /\bagent\b/i;
 const ASPECT_RATIO_TEXT = /^\d{1,2}\s*:\s*\d{1,2}$/;
+/** The model-name control opens the menu with Mode, Model and Aspect ratio together. */
+const MODEL_NAME = /\b(banana|veo|gemini|omni|imagen)\b/i;
+/** Weak signals: a settings-like name, a chevron icon, a bare mode word or an aspect-ratio chip. */
+const SETTINGS_NAME = /\b(settings?|preferences?|options?|tune|sliders?)\b|\u2699|arrow_drop_down|expand_more|unfold_more|keyboard_arrow_down|chevron_down/i;
+const MODE_NAME = /^(image|video)$/i;
+/** Menu triggers: real buttons, comboboxes, or any element that declares a popup. */
+const TRIGGER_SELECTOR = 'button, [role="button"], [role="combobox"], [aria-haspopup], [aria-expanded]';
+/** Every interactive control, including switches, for the "controls near the prompt" diagnostics. */
+const CONTROL_SELECTOR = 'button, [role="button"], [role="combobox"], [role="switch"], [role="checkbox"], [aria-haspopup], [aria-expanded]';
 const POPOVER_SELECTOR = [
   '[role="dialog"]',
   '[role="menu"]',
@@ -82,20 +91,77 @@ export function findGenerateButton(doc, promptEl) {
   return null;
 }
 
-/** Button that opens the settings popover (model / mode / aspect ratio). */
+/**
+ * How strongly a control looks like Flow's model/settings trigger. Higher wins.
+ * The model-name control ("Nano Banana Pro", "Veo 3.1", ...) opens the one menu that
+ * holds Mode, Model and Aspect ratio together, so it outranks everything else.
+ */
+function settingsTriggerRank(el) {
+  const name = accessibleName(el);
+  if (!name || GENERATE_NAME.test(name) || ADD_NAME.test(name) || REMOVE_NAME.test(name)) return 0;
+  if (MODEL_NAME.test(name)) return 3;
+  if (el.hasAttribute('aria-haspopup') || el.hasAttribute('aria-expanded')) return 2;
+  if (SETTINGS_NAME.test(name) || ASPECT_RATIO_TEXT.test(name) || MODE_NAME.test(name)) return 1;
+  return 0;
+}
+
+function bestTrigger(candidates) {
+  let best = null;
+  for (const candidate of candidates) {
+    if (!best || candidate.rank > best.rank) best = candidate;
+  }
+  return best;
+}
+
+/**
+ * The control that opens the settings popover (model / mode / aspect ratio).
+ * The prompt region is searched first. If it holds no candidate, the whole document is
+ * searched with stronger requirements only: the control can sit just outside the detected
+ * region, but a weak match anywhere on the page (a bare "Video" tab, say) must never be
+ * clicked blindly, so the fallback demands a model-like name or a declared popup.
+ */
 export function findSettingsTrigger(doc, promptEl) {
   const region = findPromptRegion(promptEl) ?? doc;
-  const buttons = queryAllVisible(region, 'button, [role="button"], [role="combobox"]').filter((button) => {
-    const name = accessibleName(button);
-    if (!name || GENERATE_NAME.test(name) || ADD_NAME.test(name) || REMOVE_NAME.test(name)) return false;
-    return button.hasAttribute('aria-haspopup') || button.hasAttribute('aria-expanded') || /arrow_drop_down|expand_more|unfold_more/i.test(name) || /\b(banana|veo|gemini|omni|imagen|image|video)\b/i.test(name);
-  });
-  const withPopup = buttons.find((button) => button.hasAttribute('aria-haspopup')) ?? buttons[0];
-  if (!withPopup) return null;
-  return {
-    el: withPopup,
-    strategy: withPopup.hasAttribute('aria-haspopup') ? 'settings-trigger-aria-haspopup' : 'settings-trigger-by-name',
+  const collect = (scope, minRank) =>
+    queryAllVisible(scope, TRIGGER_SELECTOR)
+      .map((el) => ({ el, rank: settingsTriggerRank(el) }))
+      .filter((item) => item.rank >= minRank);
+  const inRegion = bestTrigger(collect(region, 1));
+  const found = inRegion ?? bestTrigger(collect(doc, 2));
+  if (!found) return null;
+  const opensPopup = found.el.hasAttribute('aria-haspopup') || found.el.hasAttribute('aria-expanded');
+  const base = opensPopup ? 'settings-trigger-aria-haspopup' : 'settings-trigger-by-name';
+  return { el: found.el, strategy: inRegion ? base : `${base}-in-document` };
+}
+
+/**
+ * The visible interactive controls near the prompt box, for diagnostics. When a control
+ * cannot be found, this list says what the page actually offers, so the "Check Flow page"
+ * report can name the real controls instead of only reporting "Not found".
+ */
+export function listPromptControls(doc, promptEl, limit = 10) {
+  const region = findPromptRegion(promptEl) ?? doc;
+  const out = [];
+  const seen = new Set();
+  const push = (el) => {
+    if (seen.has(el) || out.length >= limit) return;
+    seen.add(el);
+    out.push({
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role') ?? '',
+      name: accessibleName(el).slice(0, 40),
+      popup: el.getAttribute('aria-haspopup') ?? '',
+    });
   };
+  for (const el of queryAllVisible(region, CONTROL_SELECTOR)) push(el);
+  // Custom-element hosts (shadow DOM) are not matched by CONTROL_SELECTOR; list them too.
+  if (out.length < limit) {
+    for (const el of region.querySelectorAll('*')) {
+      if (out.length >= limit) break;
+      if (el.tagName.includes('-') && isVisible(el)) push(el);
+    }
+  }
+  return out;
 }
 
 /** The popover that appeared most recently. */

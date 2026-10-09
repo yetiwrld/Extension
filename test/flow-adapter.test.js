@@ -65,6 +65,7 @@ test('probe reports the prompt box, Generate, settings and Agent state on a proj
   assert.equal(probe.generateFound, true);
   assert.equal(probe.generateEnabled, false, 'Generate is disabled while the prompt is empty');
   assert.equal(probe.settingsFound, true);
+  assert.deepEqual(probe.settingsCandidates, [], 'no candidates are listed when the settings control is found');
   assert.equal(probe.agentOn, false);
   assert.equal(probe.isProjectPage, true);
 });
