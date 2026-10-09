@@ -101,12 +101,16 @@ function settingSelect(key, label, settings, enabled) {
     </label>`;
   }
   // The chip and the menu can write the same model differently ("\u{1F34C} Nano Banana 2.1"
-  // vs "Nano Banana 2.1  Fast image generation"): match through the one normalized
-  // mapping so a live model is never listed twice, nor shown as unselected.
-  const isCurrent = (name) => (key === 'model' ? modelLabelsMatch(name, current) : name === current);
-  const list = current && !options.some(isCurrent) ? [current, ...options] : options;
+  // vs "Nano Banana 2.1  Fast image generation"): resolve the current value through the
+  // one normalized mapping, and mark EXACTLY ONE option (a shorter family name is a
+  // leading token run of a model name, so a loose match can hit several rows).
+  const exactIndex = options.findIndex((name) => name === current);
+  const matches = key === 'model' ? options.filter((name) => modelLabelsMatch(name, current)) : [];
+  const looseIndex = matches.length === 1 ? options.indexOf(matches[0]) : -1;
+  const list = current && exactIndex === -1 && looseIndex === -1 ? [current, ...options] : options;
+  const selectedIndex = current ? (exactIndex === -1 && looseIndex === -1 ? 0 : (exactIndex === -1 ? looseIndex : exactIndex) + (list === options ? 0 : 1)) : -1;
   const body = list
-    .map((name) => `<option value="${esc(name)}" ${isCurrent(name) ? 'selected' : ''}>${esc(name)}</option>`)
+    .map((name, index) => `<option value="${esc(name)}" ${index === selectedIndex ? 'selected' : ''}>${esc(name)}</option>`)
     .join('');
   return `
     <label class="field">

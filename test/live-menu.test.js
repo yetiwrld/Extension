@@ -347,3 +347,25 @@ test('a model whose menu row carries an icon and a description is still found (n
   assert.equal(page.state.model, 'Nano Banana Pro', 'Flow really changed the model');
   assert.ok(/Nano Banana Pro/.test(result.current.model ?? ''), 'the applied model is read back from the UI');
 });
+
+test('the chip value is read from the chip, not from the trigger button\'s accessible name', async () => {
+  // Measured on the live page (2026-10-09): the trigger is
+  // <button aria-label="Settings trigger"><span>🍌 Nano Banana 2.1 crop_16_9 x1</span></button>.
+  // Reading the accessible name reported the model as "Settings trigger".
+  const { adapter } = fixturePage({ liveMenu: true, liveMenuDeep: true, flowComponents: true, triggerNamedSettings: true });
+  const probe = await adapter.probe();
+  assert.equal(probe.detectedSettings.model, 'Nano Banana 2.1');
+  assert.equal(probe.detectedSettings.outputs, 'x1');
+  const read = await adapter.readSettings();
+  assert.equal(read.chipModel, 'Nano Banana 2.1');
+  assert.equal(read.current.model, 'Nano Banana 2.1');
+  assert.notEqual(read.current.model, 'Settings trigger');
+});
+
+test('an icon ligature beside a mode row does not become a second option', async () => {
+  // The live menu reported "mode options: image, Image, Video" with mode="image".
+  const { adapter } = fixturePage({ liveMenu: true, modeIconRow: true });
+  const read = await adapter.readSettings();
+  assert.deepEqual(read.options.mode, ['Image', 'Video']);
+  assert.equal(read.current.mode, 'Image');
+});

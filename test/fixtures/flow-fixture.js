@@ -84,6 +84,8 @@ export function installFlowFixture(
     agentChipStuck = false,
     agentOnly = false,
     decoratedModelRows = false,
+    triggerNamedSettings = false,
+    modeIconRow = false,
   } = {},
 ) {
   const doc = window.document;
@@ -384,6 +386,7 @@ export function installFlowFixture(
       : '<div role="menu" aria-label="Generation settings" data-popover="settings">';
     overlay.innerHTML = `
       ${surface}
+        ${modeIconRow ? `<div${flowComponents ? '' : ' role="menuitemradio"'} data-key="modeIcon" data-value="image" aria-checked="true">image</div>` : ''}
         ${liveRadio('mode', 'Image')}
         ${liveRadio('mode', 'Video')}
         ${liveRadio('aspectRatio', '16:9')}
@@ -590,6 +593,9 @@ export function installFlowFixture(
     attachComposer();
   }
   syncGenerate();
+  // The live page names the trigger BUTTON "Settings trigger" and shows the value in
+  // a child span: the accessible name is the control's name, not the chip's value.
+  if (triggerNamedSettings && settingsBtn) settingsBtn.setAttribute('aria-label', 'Settings trigger');
   void flowWithMissingUpload;
 
   return {

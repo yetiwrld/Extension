@@ -613,6 +613,20 @@ function summarize(topOptions, modelOptions, trigger, strategy, chip, modelTrigg
   };
   collect(topOptions, { skipModelTriggers: true });
   collect(modelOptions);
+  // Flow renders a material-symbol ligature next to some rows ("image" beside
+  // "Image"), which reads as a second option for the same value. Fold values that
+  // differ only by case into the displayed variant, so the panel offers one entry
+  // and the current value is reported the way Flow writes it.
+  for (const key of Object.keys(list)) {
+    const canonical = new Map();
+    for (const name of list[key]) {
+      const id = name.toLowerCase();
+      const kept = canonical.get(id);
+      if (!kept || (/[A-Z]/.test(name) && !/[A-Z]/.test(kept))) canonical.set(id, name);
+    }
+    list[key] = [...canonical.values()];
+    if (current[key]) current[key] = canonical.get(current[key].toLowerCase()) ?? current[key];
+  }
   // The chip is what Flow actually shows right now.
   if (!current.model && chip.model) current.model = chip.model;
   if (!current.aspectRatio && chip.aspectRatio) current.aspectRatio = chip.aspectRatio;

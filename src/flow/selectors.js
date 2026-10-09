@@ -1040,16 +1040,49 @@ export function diffSignatures(before, after) {
 }
 
 /** The model chip's raw text ("🍌 Nano Banana 2.1 crop_16_9 x1"), or null when no chip is identifiable. */
+/** Tokens that only a settings chip carries: an aspect ("crop_16_9", "16:9") or a count ("x1"). */
+const CHIP_SETTINGS_TOKEN = /(?:^|\s)(?:[a-z]+_)?\d{1,2}\s*[_:x\u00d7]\s*\d{1,2}(?=\s|$)|\bx\s?\d{1,2}\b/i;
+
+/**
+ * The text of the composer's settings chip.
+ *
+ * Measured on the live page (2026-10-09): Flow's trigger is
+ * `<button aria-label="Settings trigger"><span>\u{1F34C} Nano Banana 2.1 crop_16_9 x1</span></button>`.
+ * The accessible name is therefore the name of the CONTROL, not the value it shows,
+ * and reading it made the extension report the model as "Settings trigger".
+ *
+ * So the candidates (the button's own text and its accessible name) are ranked by
+ * evidence: a text carrying a settings token (aspect/count) is the chip's value, a
+ * text carrying a known model family is next, and a bare control name is used only
+ * when nothing better exists. Nothing is hardcoded to one model.
+ */
+function chipLabel(el) {
+  const aria = normalizeText(el.getAttribute?.('aria-label') ?? '');
+  const text = normalizeText(el.textContent ?? '').slice(0, 160);
+  const score = (value) => (!value ? -1 : CHIP_SETTINGS_TOKEN.test(value) ? 2 : MODEL_NAME.test(value) ? 1 : 0);
+  const best = [text, aria, controlLabel(el)].reduce(
+    (winner, value) => (score(value) > score(winner) ? value : winner),
+    '',
+  );
+  return best || controlLabel(el);
+}
+
 export function findModelChipText(doc, promptEl) {
   const region = findPromptRegion(promptEl) ?? doc;
   const chipEls = new Set();
   const trigger = findSettingsTrigger(doc, promptEl);
   if (trigger) chipEls.add(trigger.el);
   for (const item of collectModelNamedControls(region)) chipEls.add(item.el);
+  let fallback = null;
   for (const el of chipEls) {
-    const text = controlLabel(el);
-    if (text) return text;
+    const text = chipLabel(el);
+    if (!text) continue;
+    // A text that carries the chip's own settings tokens is the chip; a bare
+    // control name ("Settings trigger") is only used when nothing better exists.
+    if (CHIP_SETTINGS_TOKEN.test(text) || MODEL_NAME.test(text)) return text;
+    fallback = fallback ?? text;
   }
+  if (fallback) return fallback;
   return null;
 }
 
@@ -1073,8 +1106,12 @@ export function findDetectedSettings(doc, promptEl) {
   if (trigger) chipEls.add(trigger.el);
   for (const item of collectModelNamedControls(region)) chipEls.add(item.el);
   for (const el of chipEls) {
-    const parsed = parseModelChip(controlLabel(el));
-    if (!model && parsed.model) model = parsed.model;
+    const label = chipLabel(el);
+    const parsed = parseModelChip(label);
+    // A control name with no settings token and no model name is NOT a model value
+    // ("Settings trigger" must never be reported as the model).
+    const namesAModel = CHIP_SETTINGS_TOKEN.test(label) || MODEL_NAME.test(label);
+    if (!model && parsed.model && namesAModel) model = parsed.model;
     if (!aspectRatio && parsed.aspectRatio) aspectRatio = parsed.aspectRatio;
     if (!outputs && parsed.outputs) outputs = parsed.outputs;
   }
