@@ -1,6 +1,8 @@
 import { AutomationError, ERROR_CODES } from '../utils/errors.js';
+import { matchModelOption, modelLabelsMatch } from './model-id.js';
 import { accessibleName, clickElement, clickOutside, isVisible, normalizeText, pressEscape, waitForValue } from './dom.js';
 import {
+  classifyComposerState,
   classifySettingOption,
   diffSignatures,
   findActiveComposerHost,
@@ -104,6 +106,15 @@ async function runWithAgentRecovery(ctx, operation) {
     if (error?.code !== ERROR_CODES.FLOW_UI_CHANGED) throw error;
     const recovery = await exitAgentMode(ctx);
     if (!recovery.attempted || !recovery.stateChanged || !recovery.classicComposerBack) {
+      const state = classifyComposerState(ctx.doc);
+      if (state.state === 'B') {
+        throw new AutomationError(
+          ERROR_CODES.FLOW_AGENT_ONLY,
+          'Flow is showing only its Agent composer (flow-creative-agent-prompt-box) and offers no agent toggle and no standard settings control ' +
+            `(${state.evidence.join('; ')}). The extension cannot set the model, mode, aspect ratio or output count in this interface; ` +
+            'set them in Flow itself, or open a project that shows the standard composer.',
+        );
+      }
       if (recovery.chipFound && recovery.pressed) {
         throw new AutomationError(
           ERROR_CODES.FLOW_AGENT_ON,
@@ -216,7 +227,7 @@ async function applyFlowSettingsOnce(ctx, target) {
   // Keys the chip already confirms need no interaction at all.
   const chipKeys = ['model', 'aspectRatio', 'outputs'];
   const skipped = SETTING_KEYS.filter(
-    (key) => target?.[key] && chipKeys.includes(key) && chip[key] && sameName(chip[key], target[key]),
+    (key) => target?.[key] && chipKeys.includes(key) && chip[key] && valuesMatch(key, chip[key], target[key]),
   );
   const pending = SETTING_KEYS.filter((key) => target?.[key] && !skipped.includes(key));
   for (const key of skipped) trace.push({ step: 'already-correct', detail: `${labelFor(key)} "${target[key]}" is already what the chip shows — skipped` });
@@ -289,7 +300,7 @@ async function applyFlowSettingsOnce(ctx, target) {
   for (const key of SETTING_KEYS) {
     const wanted = target?.[key];
     if (!wanted) continue;
-    if (!sameName(result.current[key] ?? '', wanted)) {
+    if (!valuesMatch(key, result.current[key] ?? '', wanted)) {
       throw new AutomationError(
         ERROR_CODES.FLOW_SETTING_FAILED,
         `Flow shows ${result.current[key] ? `"${result.current[key]}"` : 'no value'} for ${labelFor(key)} after selecting "${wanted}".`,
@@ -311,7 +322,15 @@ async function selectModel(ctx, popover, options, wanted, chip, promptEl) {
   );
   if (!modelTrigger) {
     // No submenu: the menu lists models directly.
-    const direct = options.find((option) => classifySettingOption(option, { chipModel: chip.model }) === 'model' && sameName(option.name, wanted));
+    const modelOptions = options.filter((option) => classifySettingOption(option, { chipModel: chip.model }) === 'model');
+    const picked = matchModelOption(modelOptions, wanted);
+    if (picked.ambiguous) {
+      throw new AutomationError(
+        ERROR_CODES.FLOW_SETTING_FAILED,
+        `"${wanted}" matches more than one model in Flow's menu (${picked.candidates.join(', ')}); the extension will not guess which one you meant.`,
+      );
+    }
+    const direct = picked.match;
     if (!direct) {
       throw new AutomationError(
         ERROR_CODES.FLOW_SETTING_FAILED,
@@ -335,7 +354,19 @@ async function selectModel(ctx, popover, options, wanted, chip, promptEl) {
   while (depth <= 2) {
     const raw = readPopoverOptions(menu).map((option) => ({ ...option, group: option.group ?? 'Model' }));
     const models = raw.filter((option) => classifySettingOption(option, { chipModel: chip.model }) === 'model');
-    const match = models.find((option) => !isModelSubmenuTrigger(option) && sameName(option.name, wanted));
+    const leaves = models.filter((option) => !isModelSubmenuTrigger(option));
+    // A family row ("Nano Banana") is a leading token run of a model name
+    // ("Nano Banana 2.1"), so prefix matching is only allowed once no family can
+    // be descended into — otherwise the family would be clicked as the model.
+    const family = models.find((option) => isModelSubmenuTrigger(option) && containsName(wanted, option.name));
+    const picked = matchModelOption(leaves, wanted, (option) => option.name, { allowPrefix: !family });
+    if (picked.ambiguous) {
+      throw new AutomationError(
+        ERROR_CODES.FLOW_SETTING_FAILED,
+        `"${wanted}" matches more than one model in Flow's list (${picked.candidates.join(', ')}); the extension will not guess which one you meant.`,
+      );
+    }
+    const match = picked.match;
     if (match) {
       if (!match.selected && !isSelected(match.el)) {
         clickElement(match.el);
@@ -344,7 +375,6 @@ async function selectModel(ctx, popover, options, wanted, chip, promptEl) {
       return menu;
     }
     // The list shows families: descend into the one containing the wanted model.
-    const family = models.find((option) => isModelSubmenuTrigger(option) && containsName(wanted, option.name));
     if (!family || depth === 2) {
       throw new AutomationError(
         ERROR_CODES.FLOW_SETTING_FAILED,
@@ -375,7 +405,7 @@ async function verifySetting(ctx, key, wanted, prompt) {
   const verdict = await readSelectedFromMenu(ctx, key, wanted, prompt);
   if (verdict.marked) {
     if (verdict.ok) {
-      return { ok: true, chipValue, chipMatches: chipValue ? sameName(chipValue, wanted) : null };
+      return { ok: true, chipValue, chipMatches: chipValue ? valuesMatch(key, chipValue, wanted) : null };
     }
     return {
       ok: false,
@@ -384,7 +414,7 @@ async function verifySetting(ctx, key, wanted, prompt) {
   }
   // 2) The menu marks nothing: the chip is the observable state.
   if (chipValue) {
-    if (sameName(chipValue, wanted)) return { ok: true, chipValue, chipMatches: true };
+    if (valuesMatch(key, chipValue, wanted)) return { ok: true, chipValue, chipMatches: true };
     return {
       ok: false,
       message: `Flow's model chip still shows "${rawChipText(ctx, prompt) ?? chipText(chip)}" after selecting ${labelFor(key)} "${wanted}" (it shows ${key} "${chipValue}").`,
@@ -416,7 +446,7 @@ async function readSelectedFromMenu(ctx, key, wanted, prompt) {
     const chip = findDetectedSettings(ctx.doc, prompt.el);
     const selected = options.find((option) => classifySettingOption(option, { chipModel: chip.model }) === key && option.selected);
     if (!selected) return { marked: false, ok: false, actual: null };
-    return sameName(selected.name, wanted)
+    return valuesMatch(key, selected.name, wanted)
       ? { marked: true, ok: true, actual: selected.name }
       : { marked: true, ok: false, actual: selected.name };
   } finally {
@@ -542,7 +572,9 @@ async function readModelMenu(ctx, menu, chip, promptEl, depth = 0) {
   if (selected || depth >= 2) return { options: models, selected: selected?.name ?? null };
   // No model marked: the list shows families. Descend into the family that contains
   // the chip's model (or the chip's model is itself an option).
-  const direct = models.find((option) => chip.model && sameName(option.name, chip.model));
+  // A family row ("Nano Banana") is a leading token run of the chip's model
+  // ("Nano Banana 2.1"): only a LEAF row can be the selected model.
+  const direct = models.find((option) => chip.model && !isModelSubmenuTrigger(option) && modelLabelsMatch(option.name, chip.model));
   if (direct) return { options: models, selected: direct.name };
   const family = models.find((option) => isModelSubmenuTrigger(option) && chip.model && containsName(chip.model, option.name));
   if (!family) return { options: models, selected: null };
@@ -600,7 +632,7 @@ function summarize(topOptions, modelOptions, trigger, strategy, chip, modelTrigg
     chipModel: chip.model ?? null,
     chipAspectRatio: chip.aspectRatio ?? null,
     chipOutputs: chip.outputs ?? null,
-    modelMatchesChip: chip.model ? sameName(current.model ?? '', chip.model) : null,
+    modelMatchesChip: chip.model ? modelLabelsMatch(current.model ?? '', chip.model) : null,
     aspectMatchesChip: chip.aspectRatio ? sameName(current.aspectRatio ?? '', chip.aspectRatio) : null,
     outputsMatchesChip: chip.outputs ? sameName(current.outputs ?? '', chip.outputs) : null,
   };
@@ -629,6 +661,17 @@ async function requireSettingsTrigger(ctx, prompt) {
 
 function sameName(a, b) {
   return normalizeText(a).toLowerCase() === normalizeText(b).toLowerCase();
+}
+
+/**
+ * Compare a requested value with what the UI shows. Models go through the single
+ * normalized label<->identifier mapping (model-id.js), because Flow writes the same
+ * model differently on the chip and in the menu; every other setting is an exact
+ * label comparison.
+ * @param {SettingKey} key
+ */
+function valuesMatch(key, a, b) {
+  return key === 'model' ? modelLabelsMatch(a, b) : sameName(a, b);
 }
 
 function labelFor(key) {

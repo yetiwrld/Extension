@@ -7,6 +7,7 @@ import { attachReferences, clearReferences, countAttachedReferences } from './re
 import { generationStatus as readGenerationStatus, snapshotOutputs as takeOutputSnapshot } from './outputs.js';
 import {
   candidateSummaries,
+  classifyComposerState,
   collectFrameDocs,
   collectPromptCandidates,
   countUnreachableFrames,
@@ -183,6 +184,9 @@ export function createFlowAdapter(options = {}) {
         agentOn: Boolean(agentMode?.chipPressed || agent?.on),
         agentFound: Boolean(agent || agentMode?.chipFound),
         agentMode,
+        // Which of the three known composer states this page is in (A/B/C/standard),
+        // classified from measured facts so the next action is evidence-led.
+        composerState: guarded('composer state', () => classifyComposerState(doc), null),
         composerLayout: prompt ? (agent?.on ? 'agent' : 'standard') : null,
         referencesAttached: guarded('references', () => (prompt ? countAttachedReferences(doc, prompt.el) : 0), 0),
         outputsVisible: guarded('outputs', () => takeOutputSnapshot(doc).outputKeys.length, 0),
@@ -263,6 +267,19 @@ export function createFlowAdapter(options = {}) {
             : probe.agentMode?.composer === 'classic'
               ? 'Off (the classic composer is active).'
               : 'No agent-mode chip detected.',
+        ),
+        check(
+          'Composer state',
+          probe.composerState?.state === 'standard' || probe.composerState?.state === 'A',
+          probe.composerState
+            ? `${probe.composerState.label} — ${probe.composerState.evidence.join('; ')}.` +
+              (probe.composerState.state === 'B'
+                ? ' The extension cannot set model, mode, aspect ratio or output count in this interface.'
+                : probe.composerState.state === 'C'
+                  ? ' Inspect the visible settings control and its click behaviour below before changing selectors.'
+                  : '')
+            : 'Could not be classified.',
+          probe.composerState?.state === 'A',
         ),
         check('Page checks', probe.issues.length === 0, probe.issues.length ? probe.issues.join('; ') : 'All page checks ran.'),
       ];

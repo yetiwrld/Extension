@@ -1,5 +1,6 @@
 import { esc, bytes, clock, plural, truncate } from './html.js';
 import { hintFor } from './api.js';
+import { modelLabelsMatch } from '../flow/model-id.js';
 
 /**
  * View functions. Each returns an HTML string built only from escaped values.
@@ -99,9 +100,13 @@ function settingSelect(key, label, settings, enabled) {
       <select data-setting="${esc(key)}" disabled aria-label="${esc(label)}"><option value="">${esc(shown)}</option></select>
     </label>`;
   }
-  const list = current && !options.includes(current) ? [current, ...options] : options;
+  // The chip and the menu can write the same model differently ("\u{1F34C} Nano Banana 2.1"
+  // vs "Nano Banana 2.1  Fast image generation"): match through the one normalized
+  // mapping so a live model is never listed twice, nor shown as unselected.
+  const isCurrent = (name) => (key === 'model' ? modelLabelsMatch(name, current) : name === current);
+  const list = current && !options.some(isCurrent) ? [current, ...options] : options;
   const body = list
-    .map((name) => `<option value="${esc(name)}" ${name === current ? 'selected' : ''}>${esc(name)}</option>`)
+    .map((name) => `<option value="${esc(name)}" ${isCurrent(name) ? 'selected' : ''}>${esc(name)}</option>`)
     .join('');
   return `
     <label class="field">
@@ -452,6 +457,13 @@ function renderDiagnosticsExtras(diagnostics) {
         `${trigger.control ? `<${trigger.control.tag}${trigger.control.classes ? ` class="${trigger.control.classes}"` : ''}>` : ''} "${trigger.label ?? ''}"${trigger.control ? ` · visible: ${trigger.control.visible}, enabled: ${trigger.control.enabled}` : ''}`,
       )}</span></span></div>`
     : '';
+  // Which composer state the page is in (A/B/C/standard) — read-only classification.
+  const state = diagnostics.composerState;
+  const stateLine = state
+    ? `<div class=\"check\"><span class=\"check-icon\">${state.state === 'standard' ? '\u2713' : '\u26a0'}</span><span><span class=\"check-label\">Composer state</span> <span class=\"check-detail\">${esc(
+        `${state.state} — ${state.label}`,
+      )}</span></span></div>`
+    : '';
   // Agent mode: the verified chip state — the fact that explains a dead settings click.
   const agent = diagnostics.agentMode;
   const agentLine =
@@ -530,7 +542,7 @@ function renderDiagnosticsExtras(diagnostics) {
         )
         .join('')}</ul></details>`
     : '';
-  return `${detectedLine}${chipLine}${agentLine}${triggerLine}${readLine}${framesLine}${selectorsBlock}${candidatesBlock}${controlsBlock}${exceptionsBlock}
+  return `${detectedLine}${chipLine}${stateLine}${agentLine}${triggerLine}${readLine}${framesLine}${selectorsBlock}${candidatesBlock}${controlsBlock}${exceptionsBlock}
     <div class="row"><button type="button" class="btn btn-secondary btn-sm" data-action="copy-diagnostics">Copy report</button></div>`;
 }
 

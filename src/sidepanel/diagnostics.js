@@ -93,6 +93,19 @@ export function formatDiagnosticsReport(d) {
   // Agent mode: the verified chip (button.agent-mode-chip + aria-pressed), the
   // composer custom elements (existence AND visibility), and the classic settings
   // trigger's hidden state — the facts that explain a settings click going nowhere.
+  const composerState = d.composerState;
+  if (composerState) {
+    lines.push('', `Composer state: ${composerState.state} — ${composerState.label}`);
+    for (const item of composerState.evidence ?? []) lines.push(` - ${item}`);
+    lines.push(` - active composer: ${composerState.activeComposer ?? 'none visible'}`);
+    if (composerState.state === 'B') {
+      lines.push(' - consequence: the standard-composer automation cannot set model, mode, aspect ratio or output count here.');
+    }
+    if (composerState.state === 'C') {
+      lines.push(' - consequence: neither Agent mode nor a hidden trigger explains this; see the settings-trigger inspection and click evidence below.');
+    }
+  }
+
   const agent = d.agentMode;
   if (agent) {
     lines.push('', 'Agent mode (read-only inspection):');

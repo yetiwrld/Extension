@@ -36,6 +36,8 @@ export const RECOVERY_HINTS = Object.freeze({
   FLOW_UI_CHANGED: 'Flow may have changed its layout. Run "Check Flow page" in Settings for details.',
   FLOW_SETTING_FAILED: 'Check the setting in Flow, then press Resume.',
   FLOW_AGENT_ON: 'Turn off Agent in the Flow prompt box, then press Resume.',
+  FLOW_AGENT_ONLY:
+    'This Flow project shows only the Agent composer, with no agent toggle and no standard settings control. Model, mode, aspect ratio and output count cannot be set by the extension here — set them in Flow, or use a project that shows the standard composer.',
   FLOW_BUSY: 'Let Flow finish its current work, then retry the scene.',
   REFERENCE_MISSING: 'Add the missing file to the reference library.',
   REFERENCE_AMBIGUOUS: 'Choose the file to use for the ambiguous reference.',

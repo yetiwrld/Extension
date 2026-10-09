@@ -337,3 +337,13 @@ test('the composer area dump maps the chip, its chain, the region fields and gen
   assert.ok(area.generateCandidates.some((candidate) => candidate.labelled), 'generate candidates are listed');
   assert.equal(probe.promptFound, false);
 });
+
+test('a model whose menu row carries an icon and a description is still found (not "unavailable")', async () => {
+  // The live menu writes "🍌 Nano Banana 2.1  Fast image generation" where the chip
+  // writes "Nano Banana 2.1". A plain string comparison reported a model that IS in
+  // the list as unavailable; the normalized label<->identifier mapping resolves it.
+  const { adapter, page } = fixturePage({ liveMenu: true, liveMenuDeep: true, decoratedModelRows: true });
+  const result = await adapter.applySettings({ model: 'Nano Banana Pro' });
+  assert.equal(page.state.model, 'Nano Banana Pro', 'Flow really changed the model');
+  assert.ok(/Nano Banana Pro/.test(result.current.model ?? ''), 'the applied model is read back from the UI');
+});

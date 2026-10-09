@@ -240,6 +240,7 @@ test('diagnose lists each check with a plain-language result', async () => {
     'Generate button',
     'Settings control',
     'Agent mode',
+    'Composer state',
     'Page checks',
   ]);
   assert.ok(report.checks.every((item) => typeof item.detail === 'string' && item.detail.length > 0));

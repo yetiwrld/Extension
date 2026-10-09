@@ -1629,6 +1629,68 @@ export function findActiveComposerHost(doc) {
  * is hidden. In Agent mode it stays in the DOM with a bare `hidden` attribute
  * (display:none, 0x0) — present but impossible to interact with.
  */
+/**
+ * Which of the three known Flow composer states the page is in.
+ *
+ * This is a READ-ONLY classification made from measured facts (component tags,
+ * the state-guarded agent chip, the classic trigger's visibility) so the next
+ * action is chosen from evidence rather than from another selector guess:
+ *
+ * - `standard`  the classic composer and its settings trigger are usable.
+ * - `A` recoverable migrated composer: a usable `button.agent-mode-chip[aria-pressed="true"]`
+ *       exists and the classic `.settings-trigger-button` is present but hidden —
+ *       turning Agent mode off is expected to restore the standard composer.
+ * - `B` agent-only composer: the settings trigger is not usable, the only visible
+ *       composer is `flow-creative-agent-prompt-box`, and there is no usable agent
+ *       toggle to leave it. The classic automation cannot set those controls here.
+ * - `C` something else: the standard composer is present but its control does not
+ *       behave — inspect the control and the click, do not change selectors blindly.
+ *
+ * @returns {{state: 'standard'|'A'|'B'|'C', label: string, chip: object|null, settingsButton: object, composerHosts: object, activeComposer: string|null, evidence: string[]}}
+ */
+export function classifyComposerState(doc) {
+  const hosts = findComposerHosts(doc);
+  const chip = findAgentModeChip(doc);
+  const button = findSettingsTriggerButton(doc);
+  const active = findActiveComposerHost(doc);
+  // The classic `.settings-trigger-button` is one shape of the trigger; the generic
+  // resolver covers the composers that do not use that class. Either one being
+  // usable means the standard automation has a control to drive.
+  const resolved = findSettingsTrigger(doc, null);
+  const triggerUsable = Boolean((button.exists && button.visible) || resolved);
+  const chipUsable = Boolean(chip && chip.visible && chip.enabled);
+  const evidence = [
+    `agent chip: ${chip ? `found, aria-pressed=${chip.pressed}, ${chip.visible ? 'visible' : 'hidden'}, ${chip.enabled ? 'enabled' : 'disabled'}` : 'not found'}`,
+    `.${SETTINGS_TRIGGER_CLASS}: ${button.exists ? (button.visible ? 'visible' : 'present but hidden') : 'absent'}`,
+    `resolved settings trigger: ${resolved ? `found (${resolved.strategy})` : 'none'}`,
+    `composer: classic ${hosts.classic.exists ? (hosts.classic.visible ? 'visible' : 'hidden') : 'absent'}, agent ${hosts.agent.exists ? (hosts.agent.visible ? 'visible' : 'hidden') : 'absent'}`,
+  ];
+  // Order matters: the classic trigger being visible is what makes a page standard.
+  // A resolved trigger inside the AGENT composer is not that control (on the measured
+  // migrated page it opens nothing), so Agent-mode states are classified first.
+  const classicTriggerVisible = button.exists && button.visible;
+  let state;
+  if (!classicTriggerVisible && chipUsable && chip.pressed) state = 'A';
+  else if (!classicTriggerVisible && !hosts.classic.visible && hosts.agent.visible && !chipUsable) state = 'B';
+  else if (triggerUsable) state = 'standard';
+  else state = 'C';
+  const label = {
+    standard: 'standard composer (a usable settings trigger is visible)',
+    A: 'recoverable migrated composer (Agent mode is on; the classic trigger is hidden)',
+    B: 'agent-only composer (no usable agent toggle; the classic trigger is not available)',
+    C: 'standard composer with another cause (the trigger is not visible and Agent mode does not explain it)',
+  }[state];
+  return {
+    state,
+    label,
+    chip: chip ? { pressed: chip.pressed, visible: chip.visible, enabled: chip.enabled, name: chip.name } : null,
+    settingsButton: button,
+    composerHosts: composerHostSummaries(hosts),
+    activeComposer: active?.kind ?? null,
+    evidence,
+  };
+}
+
 export function findSettingsTriggerButton(doc) {
   for (const scope of collectMenuScopes(doc)) {
     for (const el of scope.querySelectorAll(`.${SETTINGS_TRIGGER_CLASS}`)) {

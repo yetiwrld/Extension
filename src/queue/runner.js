@@ -63,6 +63,7 @@ const PAUSE_CODES = new Set([
   ERROR_CODES.FLOW_NO_RESPONSE,
   ERROR_CODES.INTERRUPTED,
   ERROR_CODES.FLOW_AGENT_ON,
+  ERROR_CODES.FLOW_AGENT_ONLY,
 ]);
 
 export class AutomationRunner {
@@ -1079,6 +1080,8 @@ export class AutomationRunner {
         return { ...base, type: 'flow-unavailable', title: 'Flow is not reachable', actions: ['resume', 'stop'] };
       case ERROR_CODES.FLOW_AGENT_ON:
         return { ...base, type: 'agent-on', title: 'Agent is on', actions: ['resume', 'stop'] };
+      case ERROR_CODES.FLOW_AGENT_ONLY:
+        return { ...base, type: 'agent-only', title: 'Flow shows only the Agent composer', actions: ['resume', 'stop'] };
       case ERROR_CODES.INTERRUPTED:
         return { ...base, type: 'interrupted', title: 'Interrupted', actions: ['resume', 'stop'] };
       case ERROR_CODES.REFERENCE_MISSING:

@@ -41,7 +41,9 @@
  *                    composer with its own prompt, a visible model chip that opens
  *                    NOTHING, and button.agent-mode-chip[aria-pressed="true"].
  *                    Clicking the chip leaves Agent mode: the classic composer and
- *                    its settings trigger return. agentChipStuck makes the click a
+ *                    its settings trigger return. agentOnly renders the same migrated
+ *                    composer with NO agent-mode chip at all (state B: agent-only).
+ *                    agentChipStuck makes the click a
  *                    no-op (the recovery must then report, not claim success).
  */
 
@@ -80,6 +82,8 @@ export function installFlowFixture(
     flowComponents = false,
     agentMode = false,
     agentChipStuck = false,
+    agentOnly = false,
+    decoratedModelRows = false,
   } = {},
 ) {
   const doc = window.document;
@@ -204,7 +208,8 @@ export function installFlowFixture(
   // Agent mode and the classic composer (and its settings trigger) return.
   // ---------------------------------------------------------------------------
   let agentChipClicks = 0;
-  if (agentMode) {
+  const migrated = agentMode || agentOnly;
+  if (migrated) {
     doc.body.innerHTML = `
     <main>
       <header class="top"><button type="button" aria-label="Create new project">New project</button>${gear}</header>
@@ -245,11 +250,12 @@ export function installFlowFixture(
     promptEl = doc.getElementById('agent-prompt');
     const classicBox = doc.getElementById('classic-box');
     const agentBox = doc.getElementById('agent-box');
+    if (agentOnly) doc.getElementById('agent-mode-chip')?.remove();
     const chip = doc.getElementById('agent-mode-chip');
     const agentLabel = doc.getElementById('agent-chip-label');
     promptEl.addEventListener('input', syncGenerate);
     promptEl.addEventListener('keyup', syncGenerate);
-    chip.addEventListener('click', () => {
+    chip?.addEventListener('click', () => {
       agentChipClicks += 1;
       if (agentChipStuck) return; // the click is a no-op: the recovery must report
       chip.setAttribute('aria-pressed', 'false');
@@ -273,7 +279,7 @@ export function installFlowFixture(
   function attachComposer() {
     if (agentLayout || flowComponents) return; // the composer is already in place
     // Agent mode: the classic composer is hidden; attach only once it returns.
-    if (agentMode && doc.getElementById('classic-box')?.hidden) return;
+    if (migrated && doc.getElementById('classic-box')?.hidden) return;
     slot.innerHTML = COMPOSER_HTML[variant] ?? COMPOSER_HTML.textarea;
     promptEl = $('#prompt');
     if (!promptEl) return;
@@ -328,7 +334,7 @@ export function installFlowFixture(
   function openModelList(family) {
     overlay.innerHTML = `
       ${flowComponents ? '<div class="flow-settings-menu model-menu">' : '<div role="menu" aria-label="Model family" data-popover="model-list">'}
-        ${LIVE_MODELS[family].map((name) => `<div${flowComponents ? '' : ' role="menuitemradio"'} data-key="model" data-value="${name}" aria-checked="${state.model === name ? 'true' : 'false'}">${name}</div>`).join('')}
+        ${LIVE_MODELS[family].map((name) => `<div${flowComponents ? '' : ' role="menuitemradio"'} data-key="model" data-value="${name}" aria-checked="${state.model === name ? 'true' : 'false'}">${decoratedModelRows ? `\u{1F34C} ${name} Fast image generation` : name}</div>`).join('')}
       </div>`;
     for (const item of overlay.querySelectorAll('[data-key="model"]')) {
       item.addEventListener('click', () => {
