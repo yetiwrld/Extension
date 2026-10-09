@@ -423,6 +423,41 @@ function renderDiagnosticsExtras(diagnostics) {
   const detectedLine = detectedParts.length
     ? `<div class="check is-ok"><span class="check-icon">\u2713</span><span><span class="check-label">Detected in Flow</span> <span class="check-detail">${detectedParts.join(' \u00b7 ')}</span></span></div>`
     : '';
+  const frames = diagnostics.frames;
+  const framesLine = frames
+    ? `<div class="check"><span class="check-icon">\u2139</span><span><span class="check-label">Frames</span> <span class="check-detail">${esc(
+        `${frames.inspected ?? 1} inspected${frames.unreachable ? `, ${frames.unreachable} unreachable from this frame` : ''}`,
+      )}</span></span></div>`
+    : '';
+  const selectors = Array.isArray(diagnostics.selectorResults) ? diagnostics.selectorResults : [];
+  const selectorsBlock = selectors.length
+    ? `<details class="controls-list"><summary>Composer selectors (${selectors.length})</summary><ul>${selectors
+        .map((row) => `<li><code>${esc(row.selector)}</code> [${esc(row.scope)}] ${esc(`${row.matched} matched, ${row.visible} visible`)}</li>`)
+        .join('')}</ul></details>`
+    : '';
+  const candidates = Array.isArray(diagnostics.promptCandidates) ? diagnostics.promptCandidates : [];
+  const candidatesBlock = candidates.length
+    ? `<details class="controls-list"><summary>Prompt field candidates (${candidates.length})</summary><ul>${candidates
+        .map((candidate) => {
+          const bits = [esc(candidate.tag)];
+          if (candidate.role) bits.push(`[${esc(candidate.role)}]`);
+          if (candidate.type) bits.push(`type=${esc(candidate.type)}`);
+          if (candidate.contenteditable) bits.push(`contenteditable=${esc(candidate.contenteditable)}`);
+          if (candidate.frame && candidate.frame !== 'top') bits.push(`frame=${esc(candidate.frame)}`);
+          if (candidate.inShadowRoot) bits.push('shadow root');
+          bits.push(candidate.visible ? 'visible' : 'hidden');
+          bits.push(candidate.disabled ? 'disabled' : 'enabled');
+          const rect = candidate.rect ? `${candidate.rect.width}\u00d7${candidate.rect.height} at (${candidate.rect.x}, ${candidate.rect.y})` : 'no box';
+          const label = candidate.name || candidate.placeholder || '(unnamed)';
+          const verdict = candidate.rejection
+            ? `\u2014 rejected: ${esc(candidate.rejection)}`
+            : candidate.error
+              ? `\u2014 unreadable: ${esc(candidate.error)}`
+              : ' \u2014 usable';
+          return `<li><code>${bits.join(' ')}</code> ${esc(label)} ${esc(rect)}${verdict}</li>`;
+        })
+        .join('')}</ul></details>`
+    : '';
   const controls = Array.isArray(diagnostics.promptControls) ? diagnostics.promptControls : [];
   const controlsBlock = controls.length
     ? `<details class="controls-list"><summary>Controls near the prompt (${controls.length})</summary><ul>${controls
@@ -436,7 +471,16 @@ function renderDiagnosticsExtras(diagnostics) {
         })
         .join('')}</ul></details>`
     : '';
-  return `${detectedLine}${controlsBlock}
+  const exceptions = Array.isArray(diagnostics.exceptions) ? diagnostics.exceptions : [];
+  const exceptionsBlock = exceptions.length
+    ? `<details class="controls-list"><summary>Exceptions (${exceptions.length})</summary><ul>${exceptions
+        .map(
+          (exception) =>
+            `<li><code>${esc(exception.label ?? 'check')}</code> ${esc(exception.message ?? '')}${exception.stack ? `<div class="stack">${esc(exception.stack)}</div>` : ''}</li>`,
+        )
+        .join('')}</ul></details>`
+    : '';
+  return `${detectedLine}${framesLine}${selectorsBlock}${candidatesBlock}${controlsBlock}${exceptionsBlock}
     <div class="row"><button type="button" class="btn btn-secondary btn-sm" data-action="copy-diagnostics">Copy report</button></div>`;
 }
 

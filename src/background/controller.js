@@ -8,6 +8,7 @@ import { AutomationError, ERROR_CODES, toErrorPayload } from '../utils/errors.js
 import { defaultValue, DEFAULT_PREFS, LOG_LIMIT, mergePrefs, STORAGE_KEYS } from '../storage/schema.js';
 import { uid } from '../utils/ids.js';
 import { checkFlowConnection } from './connection.js';
+import { isFlowUrl } from './flow-bridge.js';
 
 const K = STORAGE_KEYS;
 const SESSION_CONNECTION_KEY = K.connection;
@@ -178,13 +179,52 @@ export class Controller {
     await this.store.update(K.automation, (automation) => (isActivePhase(automation.phase) ? automation : { ...automation, tabId }));
   }
 
+  /**
+   * The "Check Flow page" report. It is a report even when the Flow tab cannot be
+   * reached: the panel then shows WHY (no tab, not Flow, connector not answering)
+   * instead of only failing, and the report can still be copied.
+   */
   async diagnoseFlow() {
     const status = await this.checkFlow();
     if (status.status !== 'connected' || status.tabId == null) {
-      return { ok: false, checks: [{ label: 'Flow tab', ok: false, detail: status.message }], checkedAt: status.checkedAt };
+      return {
+        ok: false,
+        contentScript: 'not responding',
+        contentScriptDetail: status.message,
+        url: status.url ?? null,
+        flowPage: isFlowUrl(status.url),
+        checkedAt: status.checkedAt,
+        checks: [{ label: 'Flow connector', ok: false, detail: status.message }],
+        promptCandidates: [],
+        promptControls: [],
+        issues: [status.message],
+      };
     }
-    const report = await this.bridge.diagnoseTab(status.tabId);
-    return { ...report, checkedAt: status.checkedAt, tabId: status.tabId };
+    try {
+      const report = await this.bridge.diagnoseTab(status.tabId);
+      return {
+        ...report,
+        contentScript: 'responding',
+        checks: [{ label: 'Flow connector', ok: true, detail: `The connector answers in this tab (adapter ${report.adapterVersion ?? 'unknown'}).` }, ...(report.checks ?? [])],
+        checkedAt: status.checkedAt,
+        tabId: status.tabId,
+      };
+    } catch (error) {
+      // The connector answered the connection check but died before the page check.
+      const payload = toErrorPayload(error);
+      return {
+        ok: false,
+        contentScript: 'not responding',
+        contentScriptDetail: payload.message,
+        url: status.url ?? null,
+        flowPage: isFlowUrl(status.url),
+        checkedAt: status.checkedAt,
+        checks: [{ label: 'Flow connector', ok: false, detail: payload.message }],
+        promptCandidates: [],
+        promptControls: [],
+        issues: [payload.message],
+      };
+    }
   }
 
   // ---------------------------------------------------------------------------

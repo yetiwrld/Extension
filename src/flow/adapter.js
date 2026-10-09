@@ -6,15 +6,23 @@ import { insertPrompt } from './prompt.js';
 import { attachReferences, clearReferences, countAttachedReferences } from './references.js';
 import { generationStatus as readGenerationStatus, snapshotOutputs as takeOutputSnapshot } from './outputs.js';
 import {
+  candidateSummaries,
+  collectFrameDocs,
+  collectPromptCandidates,
+  countUnreachableFrames,
   findAgentToggle,
   findDetectedSettings,
   findGenerateButton,
-  findPromptBox,
   findPromptBoxWhenReady,
   findSettingsTrigger,
   findSettingsTriggerWhenReady,
+  isFlowPageUrl,
   isGenerateEnabled,
   listPromptControls,
+  requirePromptBox,
+  selectPromptCandidate,
+  selectorResults,
+  summarizePromptRejections,
 } from './selectors.js';
 import { accessibleName, clickElement, normalizeText } from './dom.js';
 
@@ -51,11 +59,7 @@ export function createFlowAdapter(options = {}) {
   const ctx = { doc, sleep, timings };
 
   function requirePrompt() {
-    const prompt = findPromptBox(doc);
-    if (!prompt) {
-      throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found. Open a project and keep the prompt box visible.');
-    }
-    return prompt;
+    return requirePromptBox(doc);
   }
 
   const adapter = {
@@ -65,30 +69,51 @@ export function createFlowAdapter(options = {}) {
     async probe() {
       // Each lookup is guarded: one unexpected element must not hide the status of the whole page.
       const issues = [];
+      const exceptions = [];
+      const note = (label, error) => {
+        const message = String(error?.message ?? error);
+        issues.push(`${label}: ${message}`);
+        // The stack helps pin a failing heuristic; it is trimmed so the report stays small.
+        const stack = String(error?.stack ?? '')
+          .split('\n')
+          .slice(0, 3)
+          .join(' | ')
+          .slice(0, 300);
+        exceptions.push({ label, message, stack });
+      };
       const guarded = (label, read, fallback = null) => {
         try {
           return read();
         } catch (error) {
-          issues.push(`${label}: ${error?.message || String(error)}`);
+          note(label, error);
           return fallback;
         }
       };
       const isProjectPage = /\/project\//.test(location?.pathname ?? '');
+      const flowPage = isFlowPageUrl(location);
       const guardedAsync = async (label, read, fallback = null) => {
         try {
           return await read();
         } catch (error) {
-          issues.push(`${label}: ${error?.message || String(error)}`);
+          note(label, error);
           return fallback;
         }
       };
-      let prompt = guarded('prompt box', () => findPromptBox(doc));
-      if (!prompt && isProjectPage) {
+      // Every text field the page offers, with why each is or is not the composer.
+      let candidates = guarded('prompt candidates', () => collectPromptCandidates(doc), []);
+      for (const candidate of candidates) {
+        if (candidate.error) issues.push(`prompt candidate: ${candidate.error}`);
+      }
+      let prompt = guarded('prompt box', () => selectPromptCandidate(candidates));
+      if (!prompt && flowPage && (isProjectPage || doc.readyState !== 'complete')) {
         // Flow renders the project UI asynchronously: wait briefly for the composer
         // instead of reporting a missing prompt on a page that is still loading.
+        // Off a project URL the wait is shorter: a settled page reports at once.
+        const composerWaitMs = isProjectPage ? waits.composerMs : Math.min(waits.composerMs, 800);
         prompt = await guardedAsync('prompt box (after waiting)', () =>
-          findPromptBoxWhenReady(doc, { timeoutMs: waits.composerMs, sleep }),
+          findPromptBoxWhenReady(doc, { timeoutMs: composerWaitMs, sleep }),
         );
+        if (prompt) candidates = guarded('prompt candidates (after waiting)', () => collectPromptCandidates(doc), candidates);
       }
       const generate = guarded('Generate button', () => (prompt ? findGenerateButton(doc, prompt.el) : findGenerateButton(doc, null)));
       let trigger = guarded('settings control', () => (prompt ? findSettingsTrigger(doc, prompt.el) : null));
@@ -100,9 +125,24 @@ export function createFlowAdapter(options = {}) {
       const agent = guarded('agent toggle', () => (prompt ? findAgentToggle(doc, prompt.el) : null));
       return {
         url: location?.href ?? '',
+        flowPage,
         isProjectPage,
+        workspaceDetected: Boolean(prompt),
         promptFound: Boolean(prompt),
         promptStrategy: prompt?.strategy ?? null,
+        promptEnabled: prompt ? prompt.enabled !== false : false,
+        promptAmbiguous: Boolean(prompt?.ambiguous),
+        promptReasons: prompt?.reasons ?? [],
+        // The text fields the page offers, so a missing composer can be diagnosed
+        // from the panel: each candidate's shape, label, visibility, size, frame and
+        // rejection reason. Never the field's content.
+        promptCandidates: candidateSummaries(candidates),
+        frames: guarded(
+          'frames',
+          () => ({ inspected: 1 + collectFrameDocs(doc).length, unreachable: countUnreachableFrames(doc) }),
+          { inspected: 1, unreachable: 0 },
+        ),
+        selectorResults: guarded('selector results', () => selectorResults(doc), []),
         generateFound: Boolean(generate),
         generateStrategy: generate?.strategy ?? null,
         generateEnabled: guarded('Generate state', () => (generate ? isGenerateEnabled(generate.el) : false), false),
@@ -119,9 +159,11 @@ export function createFlowAdapter(options = {}) {
         ),
         agentOn: Boolean(agent?.on),
         agentFound: Boolean(agent),
+        composerLayout: prompt ? (agent?.on ? 'agent' : 'standard') : null,
         referencesAttached: guarded('references', () => (prompt ? countAttachedReferences(doc, prompt.el) : 0), 0),
         outputsVisible: guarded('outputs', () => takeOutputSnapshot(doc).outputKeys.length, 0),
         issues,
+        exceptions,
       };
     },
 
@@ -129,9 +171,20 @@ export function createFlowAdapter(options = {}) {
     async diagnose() {
       const probe = await adapter.probe();
       const checks = [
-        check('Flow page', Boolean(probe.url), probe.url || 'Unknown URL'),
-        check('Project open', probe.isProjectPage, probe.isProjectPage ? 'URL is a project page.' : 'Open a project (URL contains /project/).'),
-        check('Prompt box', probe.promptFound, probe.promptFound ? `Found (${probe.promptStrategy}).` : 'Not found. The prompt box is required.'),
+        check(
+          'Flow page',
+          probe.flowPage,
+          probe.flowPage ? 'This is a supported Flow page.' : `Not a supported Flow page (${probe.url || 'unknown URL'}).`,
+        ),
+        check(
+          'Project open',
+          probe.isProjectPage,
+          probe.isProjectPage
+            ? 'URL is a project page.'
+            : `Not a /project/ URL. Workspace composer detected: ${probe.workspaceDetected ? 'yes' : 'no'}.`,
+          !probe.isProjectPage && probe.workspaceDetected,
+        ),
+        check('Prompt box', probe.promptFound, promptFoundDetail(probe)),
         check('Generate button', probe.generateFound, probe.generateFound ? `Found (${probe.generateStrategy}), ${probe.generateEnabled ? 'enabled' : 'disabled'}.` : 'Not found.'),
         check(
           'Settings control',
@@ -222,8 +275,26 @@ export async function handleFlowCommand(adapter, command, payload) {
   }
 }
 
-function check(label, ok, detail) {
-  return { label, ok: Boolean(ok), detail: normalizeText(detail) };
+function check(label, ok, detail, warn = false) {
+  return { label, ok: Boolean(ok), warn, detail: normalizeText(detail) };
+}
+
+/** What the prompt-box check says, including why the composer was selected (or why none was). */
+function promptFoundDetail(probe) {
+  if (!probe.promptFound) {
+    const candidates = probe.promptCandidates ?? [];
+    const visible = candidates.filter((candidate) => candidate.visible && !candidate.rejection && !candidate.error).length;
+    const detail = candidates.length
+      ? `${candidates.length} text field(s) on the page (${visible} usable): ${summarizePromptRejections(candidates)}.`
+      : 'No text-entry element exists on this page.';
+    return `Not found. ${detail} Open a project and keep the prompt box visible.`;
+  }
+  const parts = [`Found (${probe.promptStrategy})`];
+  if (probe.promptEnabled === false) parts.push('disabled');
+  if (probe.promptAmbiguous) parts.push('several fields match equally');
+  if (probe.composerLayout) parts.push(`${probe.composerLayout} layout`);
+  if (Array.isArray(probe.promptReasons) && probe.promptReasons.length) parts.push(`why: ${probe.promptReasons.join('; ')}`);
+  return `${parts.join(', ')}.`;
 }
 
 /** When the settings control is missing, name the controls that are near the prompt box. */

@@ -21,8 +21,8 @@ the live page matches.
 
 | What | How the adapter finds it | Symptom when wrong | Where |
 | --- | --- | --- | --- |
-| Prompt box | Visible `textarea`, or `contenteditable` / `role="textbox"`. Labels that mention prompt, describe, imagine, create or generate score higher. | "Flow prompt box not found." | `selectors.js` `findPromptBox` |
-| Generate button | Visible button in the prompt's region named Generate, Create or Make. Document-wide fallback only for an explicit "Generate". | "Generate button not found." or "disabled" | `findGenerateButton` |
+| Prompt box | Candidate discovery, then disambiguation. Candidates: every `textarea`, text-like `input`, any `contenteditable` value (`true`, `""`, `plaintext-only`) and any `role="textbox"`, in the top document, in same-origin frames and in shadow roots. Rejected: search fields, fields in header/nav/aside/search regions, fields in dialogs, read-only fields, unrelated names. Scored by: prompt-like label, a Generate/Send control in its region, an Add/upload control in its region, a model/settings control in its region, size, enabled. Equal scores are reported as ambiguous. Both the standard composer and the Agent chat input are detected; the report says which layout was active. | "Flow prompt box not found." — the error names every text field the page offers and why each was rejected | `selectors.js` `collectPromptCandidates`, `selectPromptCandidate`, `findPromptBox`, `requirePromptBox` |
+| Generate button | Visible control in the prompt's region named Generate, Create, Make, Send or Submit (a chat layout starts with Send). Document-wide fallback only for an explicit "Generate". | "Generate button not found." or "disabled" | `findGenerateButton` |
 | Settings control | The model-name control in the prompt region (it opens the menu with Mode, Model and Aspect ratio together), then any control with `aria-haspopup`/`aria-expanded` (any tag), then settings-like names, chevrons, aspect-ratio chips and bare Image/Video words. If the prompt region holds no candidate, the document is searched, but only strong matches (model name or declared popup) are clicked there. When nothing is found, the Check Flow page report lists the controls that are near the prompt. | "Could not find the model/settings control." | `findSettingsTrigger`, `listPromptControls` |
 | Settings options | Options inside an open menu, dialog or listbox. Grouped by the nearest heading (Mode, Model, Aspect ratio). Options are classified by group, then by shape (`16:9`). | Empty or wrong option lists; setting not found | `readPopoverOptions`, `classifySettingOption` |
 | Agent switch | Control named "Agent" with `aria-checked` or `aria-pressed`. | Agent state not detected | `findAgentToggle` |
@@ -47,13 +47,20 @@ Do this once on a real, signed-in Flow project before using the queue on real wo
 2. Open a Flow project in the active tab and open the side panel. The header should read
    **● Connected**.
 3. Open **Settings → Check Flow page**. Each check should be OK:
-   Flow page, Project open, Prompt box, Generate button, Settings control, Agent mode.
-   Any failing check names the heuristic that needs updating (table above). When the
-   settings control is not found, the report lists the controls that ARE near the prompt
-   (tag, role, accessible name, purpose) and the settings those controls show; press
-   **Copy report** to put the whole report on the clipboard and paste it where the
-   heuristic is being fixed. The report contains page structure only — never your prompt
-   text or account details.
+   Flow connector, Flow page, Project open, Prompt box, Generate button, Settings
+   control, Agent mode. Any failing check names the heuristic that needs updating
+   (table above). The report lists, with the checks:
+   - the composer selectors that ran and how many fields each matched, per frame;
+   - every prompt field candidate: tag, role, accessible label, placeholder, contenteditable
+     value, visibility, enabled state, bounding rectangle, frame (or shadow root), and
+     why it was or was not chosen;
+   - the controls that ARE near the prompt (tag, role, accessible name, purpose) and the
+     settings those controls show;
+   - any exception with a trimmed stack trace.
+   Press **Copy report** to put the whole report on the clipboard and paste it where the
+   heuristic is being fixed. The report contains page structure only — a field's content
+   (your prompt text) is never read, and account details are never collected. The report
+   is produced even when the connector does not answer, so a dead tab is itself diagnosable.
 4. Press **Read from Flow**. Mode, Model and Aspect ratio should list exactly what Flow's
    settings menu shows, and the current values should match Flow.
 5. Add one real reference image whose filename a one-scene document names exactly. Analyze a
@@ -70,5 +77,10 @@ Do this once on a real, signed-in Flow project before using the queue on real wo
 ## Changing a heuristic
 
 Change only `src/flow/selectors.js` (and `dom.js` for generic helpers). Before changing it, add a
-test in `test/flow-adapter.test.js` that reproduces the observed markup, so the fix is pinned.
-Then run `npm test` and `npm run e2e`.
+test that reproduces the observed markup — `test/prompt-detection.test.js` for the composer,
+`test/settings-trigger.test.js` for the settings control, `test/flow-adapter.test.js` for the
+adapter contract — so the fix is pinned. Then run `npm test` and `npm run e2e`.
+
+Composer detection never reads a field's text content: for a composer, the text content IS the
+user's prompt. Candidate labels come from `aria-label`, `aria-labelledby`, `placeholder` and
+`title` only. Keep it that way — the "Check Flow page" report must never carry prompt text.

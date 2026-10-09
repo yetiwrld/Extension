@@ -10,6 +10,10 @@
  * Variants:
  *   'textarea'        prompt is a <textarea> (default)
  *   'contenteditable' prompt is a rich-text box (role=textbox)
+ *   'plaintext-only'  prompt is contenteditable="plaintext-only"
+ *   'input'           prompt is a single-line <input> (chat-style composer)
+ *   'agent'           the Agent layout: a chat panel replaces the standard prompt box
+ *   'late'            the standard composer is rendered ~60ms after install
  */
 
 export const FIXTURE_CATALOG = Object.freeze({
@@ -22,9 +26,16 @@ export const FIXTURE_CATALOG = Object.freeze({
 });
 
 /** 1x1 transparent GIF, so the synthetic thumbnails load without network access. */
-const PLACEHOLDER_IMAGE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+const PLACEHOLDER_IMAGE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRA7';
 
-export function installFlowFixture(window, { variant = 'textarea', flowWithMissingUpload = false } = {}) {
+const COMPOSER_HTML = {
+  textarea: '<textarea id="prompt" placeholder="Describe your image or video"></textarea>',
+  contenteditable: '<div id="prompt" role="textbox" contenteditable="true" aria-label="Describe your image or video" class="editor"></div>',
+  'plaintext-only': '<div id="prompt" role="textbox" contenteditable="plaintext-only" aria-label="Describe your image or video" class="editor"></div>',
+  input: '<input id="prompt" type="text" placeholder="Describe your image or video">',
+};
+
+export function installFlowFixture(window, { variant = 'textarea', flowWithMissingUpload = false, lateComposerMs = 60 } = {}) {
   const doc = window.document;
   const state = {
     mode: 'Image',
@@ -37,7 +48,28 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
     submitted: [],
   };
 
-  doc.body.innerHTML = `
+  const agentLayout = variant === 'agent';
+  doc.body.innerHTML = agentLayout
+    ? `
+    <main>
+      <header class="top"><button type="button" aria-label="Create new project">New project</button></header>
+      <section class="results" id="results" aria-label="Results"></section>
+      <div class="agent-panel" id="prompt-box">
+        <div class="agent-head">
+          <button type="button" id="agent" role="switch" aria-checked="true">Agent</button>
+          <button type="button" id="settings-btn" aria-haspopup="menu" aria-expanded="false">${state.model} \u25be</button>
+        </div>
+        <div class="messages" id="messages" aria-label="Agent messages"></div>
+        <div class="chat-bar">
+          <input id="prompt" type="text" aria-label="Message the agent" placeholder="Ask the agent to create something">
+          <button type="button" id="generate" aria-label="Send">
+            <span class="material-symbols">arrow_forward</span> Send
+          </button>
+        </div>
+      </div>
+      <div id="overlay-root"></div>
+    </main>`
+    : `
     <main>
       <header class="top"><button type="button" aria-label="Create new project">New project</button></header>
       <section class="results" id="results" aria-label="Results"></section>
@@ -48,11 +80,7 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
           <button type="button" id="settings-btn" aria-haspopup="menu" aria-expanded="false">${state.model} \u25be</button>
           <button type="button" id="agent" role="switch" aria-checked="false">Agent</button>
         </div>
-        ${
-          variant === 'contenteditable'
-            ? '<div id="prompt" role="textbox" contenteditable="true" aria-label="Describe your image or video" class="editor"></div>'
-            : '<textarea id="prompt" placeholder="Describe your image or video"></textarea>'
-        }
+        <div id="prompt-slot"></div>
         <button type="button" id="generate" aria-label="Generate">
           <span class="material-symbols">arrow_forward</span> Generate
         </button>
@@ -61,7 +89,7 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
     </main>`;
 
   const $ = (sel) => doc.querySelector(sel);
-  const promptEl = $('#prompt');
+  const slot = $('#prompt-slot');
   const generateBtn = $('#generate');
   const settingsBtn = $('#settings-btn');
   const addBtn = $('#add-btn');
@@ -69,12 +97,24 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
   const overlay = $('#overlay-root');
   const refsEl = $('#refs');
   const resultsEl = $('#results');
+  let promptEl = null;
+
+  /** Insert the composer for this variant (standard layouts) and wire its events. */
+  function attachComposer() {
+    if (agentLayout) return; // the Agent chat input is already the composer
+    slot.innerHTML = COMPOSER_HTML[variant] ?? COMPOSER_HTML.textarea;
+    promptEl = $('#prompt');
+    if (!promptEl) return;
+    promptEl.addEventListener('input', syncGenerate);
+    promptEl.addEventListener('keyup', syncGenerate);
+    syncGenerate();
+  }
 
   // The Upload control exists only while the Add menu is open, like a real menu.
   function closePopover() {
     overlay.innerHTML = '';
     settingsBtn.setAttribute('aria-expanded', 'false');
-    addBtn.setAttribute('aria-expanded', 'false');
+    if (addBtn) addBtn.setAttribute('aria-expanded', 'false');
   }
 
   function renderSettingsButton() {
@@ -126,40 +166,42 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
     else openSettings();
   });
 
-  addBtn.addEventListener('click', () => {
-    closePopover();
-    overlay.innerHTML = `
-      <div role="menu" aria-label="Add">
-        <button type="button" role="menuitem" id="upload-item">Upload image</button>
-        <button type="button" role="menuitem">Use from project</button>
-      </div>`;
-    addBtn.setAttribute('aria-expanded', 'true');
-    overlay.querySelector('#upload-item').addEventListener('click', () => {
-      if (!doc.querySelector('input[type="file"]')) {
-        const input = doc.createElement('input');
-        input.type = 'file';
-        input.accept = 'image/*';
-        input.multiple = true;
-        input.hidden = true;
-        // jsdom does not model the files setter for arbitrary objects; keep the value the adapter sets.
-        let files = null;
-        Object.defineProperty(input, 'files', {
-          configurable: true,
-          get: () => files,
-          set: (value) => {
-            files = value;
-          },
-        });
-        input.addEventListener('change', () => {
-          for (const file of Array.from(input.files ?? [])) {
-            addChip(file.name);
-          }
-        });
-        $('#prompt-box').appendChild(input);
-      }
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
       closePopover();
+      overlay.innerHTML = `
+        <div role="menu" aria-label="Add">
+          <button type="button" role="menuitem" id="upload-item">Upload image</button>
+          <button type="button" role="menuitem">Use from project</button>
+        </div>`;
+      addBtn.setAttribute('aria-expanded', 'true');
+      overlay.querySelector('#upload-item').addEventListener('click', () => {
+        if (!doc.querySelector('input[type="file"]')) {
+          const input = doc.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*';
+          input.multiple = true;
+          input.hidden = true;
+          // jsdom does not model the files setter for arbitrary objects; keep the value the adapter sets.
+          let files = null;
+          Object.defineProperty(input, 'files', {
+            configurable: true,
+            get: () => files,
+            set: (value) => {
+              files = value;
+            },
+          });
+          input.addEventListener('change', () => {
+            for (const file of Array.from(input.files ?? [])) {
+              addChip(file.name);
+            }
+          });
+          $('#prompt-box').appendChild(input);
+        }
+        closePopover();
+      });
     });
-  });
+  }
 
   function addChip(name) {
     state.references.push(name);
@@ -179,14 +221,19 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
   });
 
   function syncGenerate() {
+    if (!promptEl) return;
     const empty = !(promptEl.value ?? promptEl.textContent ?? '').trim();
     generateBtn.disabled = empty;
   }
-  promptEl.addEventListener('input', syncGenerate);
-  promptEl.addEventListener('keyup', syncGenerate);
+
+  if (agentLayout) {
+    promptEl = $('#prompt');
+    promptEl.addEventListener('input', syncGenerate);
+    promptEl.addEventListener('keyup', syncGenerate);
+  }
 
   generateBtn.addEventListener('click', () => {
-    if (generateBtn.disabled) return;
+    if (generateBtn.disabled || !promptEl) return;
     const text = (promptEl.value ?? promptEl.textContent ?? '').trim();
     state.submitted.push(text);
     state.generating += 1;
@@ -218,13 +265,21 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
   }
 
   renderSettingsButton();
+  if (variant === 'late') {
+    // The composer renders after the page: detection must wait for it.
+    setTimeout(attachComposer, lateComposerMs);
+  } else {
+    attachComposer();
+  }
   syncGenerate();
   void flowWithMissingUpload;
 
   return {
     state,
     doc,
-    promptEl,
+    get promptEl() {
+      return promptEl;
+    },
     generateBtn,
     settingsBtn,
     finishGeneration,

@@ -5,10 +5,10 @@ import {
   findAddButton,
   findFileInput,
   findOpenPopover,
-  findPromptBox,
   findPromptRegion,
   findReferenceRemoveButtons,
   findUploadMenuItem,
+  requirePromptBox,
 } from './selectors.js';
 
 /**
@@ -41,10 +41,7 @@ export function countAttachedReferences(doc, promptEl) {
  * @returns {Promise<{removed: number, remaining: number}>}
  */
 export async function clearReferences(ctx) {
-  const prompt = findPromptBox(ctx.doc);
-  if (!prompt) {
-    throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found.');
-  }
+  const prompt = requirePromptBox(ctx.doc);
   let removed = 0;
   for (let round = 0; round < MAX_CLEAR_ROUNDS; round += 1) {
     const buttons = findReferenceRemoveButtons(prompt.el);
@@ -62,10 +59,7 @@ export async function clearReferences(ctx) {
  */
 export async function attachReferences(ctx, payloads) {
   if (!payloads.length) return { attached: 0, expected: 0 };
-  const prompt = findPromptBox(ctx.doc);
-  if (!prompt) {
-    throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found.');
-  }
+  const prompt = requirePromptBox(ctx.doc);
 
   let input = findFileInput(ctx.doc);
   if (!input) {

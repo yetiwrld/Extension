@@ -984,6 +984,15 @@ textarea:focus {
   border-radius: 4px;
 }
 
+.controls-list .stack {
+  margin-top: 2px;
+  color: var(--muted);
+  font-family: var(--font-text);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .check-detail {
   color: var(--muted);
   min-width: 0;

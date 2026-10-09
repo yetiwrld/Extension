@@ -8,6 +8,7 @@ import { AutomationRunner } from '../src/queue/runner.js';
 import { createFlowBridge, isFlowUrl } from '../src/background/flow-bridge.js';
 import { checkFlowConnection } from '../src/background/connection.js';
 import { createFileLoader } from '../src/background/files.js';
+import { AutomationError, ERROR_CODES } from '../src/utils/errors.js';
 import { virtualClock, scriptedFlow, readExampleDocument, FAST_TIMINGS, TEST_LIBRARY } from './helpers.js';
 
 const FLOW_TAB = { id: 7, url: 'https://flow.google.com/project/abc123', active: true };
@@ -297,4 +298,51 @@ test('Read from Flow is refused while the automation runs, so Flow menus are nev
   await assert.rejects(controller.handle('refreshFlowSettings'), /Stop the automation/);
   await controller.handle('stop');
   await controller.runner.whenIdle();
+});
+
+test('the page check reports a responding connector and prepends its check', async () => {
+  const { controller } = await createController();
+  const report = await controller.handle('diagnoseFlow');
+  assert.equal(report.contentScript, 'responding');
+  assert.equal(report.ok, undefined, 'the report itself is the answer, not an error envelope');
+  assert.equal(report.checks[0].label, 'Flow connector');
+  assert.equal(report.checks[0].ok, true);
+  assert.match(report.checks[0].detail, /adapter/);
+  assert.ok(report.checks.some((check) => check.label === 'Prompt box'), 'the adapter checks follow');
+  assert.equal(report.tabId, 7);
+});
+
+test('the page check still produces a report when the connector does not answer', async () => {
+  const { controller } = await createController({ chromeApi: fakeChrome({ respond: false }) });
+  const report = await controller.handle('diagnoseFlow');
+  assert.equal(report.contentScript, 'not responding');
+  assert.match(report.contentScriptDetail, /Reload the Flow tab/);
+  assert.equal(report.checks.length, 1);
+  assert.equal(report.checks[0].label, 'Flow connector');
+  assert.equal(report.checks[0].ok, false);
+  assert.match(report.checks[0].detail, /Reload the Flow tab/);
+  assert.deepEqual(report.promptCandidates, [], 'no candidates are invented for a dead tab');
+  assert.ok(report.issues.length >= 1);
+});
+
+test('the page check reports a tab that is not on Flow', async () => {
+  const api = fakeChrome({ tabs: [{ id: 7, url: 'https://example.com/', active: true }] });
+  const { controller } = await createController({ chromeApi: api });
+  const report = await controller.handle('diagnoseFlow');
+  assert.equal(report.contentScript, 'not responding');
+  assert.equal(report.flowPage, false);
+  assert.equal(report.url, 'https://example.com/');
+  assert.match(report.checks[0].detail, /Open Flow/);
+});
+
+test('the page check reports a connector that dies between the connection check and the page check', async () => {
+  const { controller } = await createController();
+  controller.bridge.diagnoseTab = async () => {
+    throw new AutomationError(ERROR_CODES.FLOW_NO_RESPONSE, 'Flow did not answer "diagnose".');
+  };
+  const report = await controller.handle('diagnoseFlow');
+  assert.equal(report.contentScript, 'not responding');
+  assert.match(report.contentScriptDetail, /did not answer/);
+  assert.equal(report.checks[0].ok, false);
+  assert.deepEqual(report.promptCandidates, []);
 });

@@ -262,17 +262,34 @@ test('probe waits for a composer that renders late instead of failing at once', 
   const adapter = createFlowAdapter({ doc: window.document, location: window.location, sleep, waits: { composerMs: 1000 } });
   const probe = await adapter.probe();
   assert.equal(probe.promptFound, true, 'the late composer is found after a bounded wait');
-  assert.equal(probe.promptStrategy, 'visible-textarea');
+  // No toolbar buttons in this page, so the label decides between candidates.
+  assert.equal(probe.promptStrategy, 'composer-textarea-by-label');
 });
 
-test('probe does not wait on a non-project page', async () => {
+test('probe does not wait on a settled non-project page', async () => {
   const window = pageWith('<div id="prompt-box"></div>', 'https://flow.google.com/');
+  // Let the document settle, as document_idle does in a real browser.
+  await new Promise((resolve) => {
+    if (window.document.readyState === 'complete') resolve();
+    else window.addEventListener('load', resolve);
+  });
   const adapter = createFlowAdapter({ doc: window.document, location: window.location, sleep, waits: { composerMs: 5000 } });
   const started = Date.now();
   const probe = await adapter.probe();
   assert.equal(probe.promptFound, false);
   assert.equal(probe.isProjectPage, false);
-  assert.ok(Date.now() - started < 1000, 'no long wait on a page that has no composer');
+  assert.ok(Date.now() - started < 500, 'no long wait on a page that has no composer');
+});
+
+test('probe waits only briefly on a non-project page that is still loading', async () => {
+  const window = pageWith('<div id="prompt-box"></div>', 'https://flow.google.com/');
+  // readyState is still 'loading' here, exactly as at document_idle on a slow page.
+  assert.notEqual(window.document.readyState, 'complete');
+  const adapter = createFlowAdapter({ doc: window.document, location: window.location, sleep, waits: { composerMs: 5000 } });
+  const started = Date.now();
+  const probe = await adapter.probe();
+  assert.equal(probe.promptFound, false);
+  assert.ok(Date.now() - started < 2000, `the off-project wait stays bounded (took ${Date.now() - started}ms)`);
 });
 
 test('listPromptControls also lists custom-element hosts (shadow DOM controls)', () => {
@@ -292,7 +309,8 @@ test('findPromptBox still finds the composer directly (detection stays a separat
   const window = pageWith('<div id="prompt-box"><textarea id="prompt" placeholder="Describe"></textarea></div>');
   const prompt = findPromptBox(window.document);
   assert.equal(prompt.el.id, 'prompt');
-  assert.equal(prompt.strategy, 'visible-textarea');
+  assert.equal(prompt.strategy, 'composer-textarea-by-label');
+  assert.equal(prompt.enabled, true);
 });
 
 test('the controls list never includes the composer or its text (privacy)', () => {

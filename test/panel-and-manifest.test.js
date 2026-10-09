@@ -159,3 +159,77 @@ test('the content script only runs on Flow hosts and only in the top frame', () 
   assert.equal(script.all_frames, false);
   assert.ok(script.matches.every((pattern) => pattern.includes('flow.google.com') || pattern.includes('labs.google/fx/tools/flow')));
 });
+
+test('the page check renders the composer candidates, selectors and exceptions', () => {
+  const ui = { busy: false, notice: null, confirmStart: false, logOpen: false, diagnostics: null };
+  const snapshot = { prefs: {}, automation: { phase: 'idle' } };
+  const hostile = '<img src=x onerror=alert(1)>';
+  const diagnostics = {
+    checkedAt: 1_760_000_000_000,
+    url: 'https://flow.google.com/project/abc',
+    flowPage: true,
+    contentScript: 'responding',
+    adapterVersion: '1.0.0',
+    frames: { inspected: 2, unreachable: 1 },
+    isProjectPage: true,
+    workspaceDetected: false,
+    promptFound: false,
+    promptCandidates: [
+      {
+        tag: 'input',
+        role: 'searchbox',
+        name: hostile,
+        placeholder: '',
+        type: 'search',
+        contenteditable: '',
+        disabled: false,
+        readonly: false,
+        visible: true,
+        frame: 'top',
+        inShadowRoot: false,
+        rect: { x: 1, y: 2, width: 3, height: 4 },
+        rejection: 'search field',
+        error: null,
+      },
+    ],
+    selectorResults: [{ selector: 'textarea', scope: 'top', matched: 1, visible: 1 }],
+    promptControls: [],
+    detectedSettings: {},
+    exceptions: [{ label: 'prompt candidates', message: hostile, stack: hostile }],
+    checks: [
+      { label: 'Flow connector', ok: true, detail: 'The connector answers.' },
+      { label: 'Prompt box', ok: false, detail: 'Not found.' },
+    ],
+    issues: [],
+  };
+  const html = R.renderSettings(snapshot, { ...ui, diagnostics });
+  assert.match(html, /Prompt field candidates \(1\)/);
+  assert.match(html, /Composer selectors \(1\)/);
+  assert.match(html, /Exceptions \(1\)/);
+  assert.match(html, /\[searchbox\]/);
+  assert.match(html, /rejected: search field/);
+  assert.match(html, /3\u00d74 at \(1, 2\)/);
+  assert.match(html, /data-action="copy-diagnostics"/, 'the copy button is always available');
+  assert.equal(html.includes('<img src=x'), false, 'candidate names are escaped');
+});
+
+test('the page check renders a dead-connector report with its reason', () => {
+  const ui = { busy: false, notice: null, confirmStart: false, logOpen: false, diagnostics: null };
+  const snapshot = { prefs: {}, automation: { phase: 'idle' } };
+  const diagnostics = {
+    ok: false,
+    contentScript: 'not responding',
+    contentScriptDetail: 'Could not connect to this Flow tab.',
+    url: 'https://flow.google.com/project/abc',
+    flowPage: true,
+    checkedAt: 1_760_000_000_000,
+    checks: [{ label: 'Flow connector', ok: false, detail: 'Could not connect to this Flow tab.' }],
+    promptCandidates: [],
+    promptControls: [],
+    issues: ['Could not connect to this Flow tab.'],
+  };
+  const html = R.renderSettings(snapshot, { ...ui, diagnostics });
+  assert.match(html, /Flow connector/);
+  assert.match(html, /Could not connect to this Flow tab\./);
+  assert.match(html, /data-action="copy-diagnostics"/, 'the report can still be copied');
+});

@@ -3,12 +3,12 @@ import { accessibleName, clickElement, clickOutside, normalizeText, pressEscape,
 import {
   classifySettingOption,
   findOpenPopover,
-  findPromptBox,
   findSettingsTrigger,
   findSettingsTriggerWhenReady,
   isSelected,
   listPromptControls,
   readPopoverOptions,
+  requirePromptBox,
 } from './selectors.js';
 
 /**
@@ -28,7 +28,7 @@ export const SETTING_KEYS = Object.freeze(['mode', 'model', 'aspectRatio']);
  * @returns {Promise<{current: Record<SettingKey, string|null>, options: Record<SettingKey, string[]>, strategy: string}>}
  */
 export async function readFlowSettings(ctx) {
-  const prompt = requirePrompt(ctx.doc);
+  const prompt = requirePromptBox(ctx.doc);
   const trigger = await requireSettingsTrigger(ctx, prompt);
   const popover = await openSettingsPopover(ctx, trigger.el);
   try {
@@ -48,7 +48,7 @@ export async function applyFlowSettings(ctx, target) {
     const wanted = target?.[key];
     if (!wanted) continue;
 
-    const prompt = requirePrompt(ctx.doc);
+    const prompt = requirePromptBox(ctx.doc);
     const trigger = await requireSettingsTrigger(ctx, prompt);
     const popover = await openSettingsPopover(ctx, trigger.el);
     let applied = false;
@@ -142,14 +142,6 @@ function summarize(options, trigger, doc, promptEl, strategy) {
     if (match) current.model = match;
   }
   return { current, options: list, strategy: `${strategy}; popover-options=${options.length}` };
-}
-
-function requirePrompt(doc) {
-  const prompt = findPromptBox(doc);
-  if (!prompt) {
-    throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found. Open a Flow project and keep the prompt box visible.');
-  }
-  return prompt;
 }
 
 /**

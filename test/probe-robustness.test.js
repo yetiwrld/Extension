@@ -35,9 +35,13 @@ test('one unreadable element does not stop the page check, and the failure is re
   assert.equal(probe.promptFound, false);
   assert.equal(probe.generateFound, true, `the Generate button is still found: ${JSON.stringify(probe)}`);
   assert.ok(
-    probe.issues.some((issue) => issue.startsWith('prompt box: unreadable attribute')),
+    probe.issues.some((issue) => issue.startsWith('prompt candidate: unreadable attribute')),
     JSON.stringify(probe.issues),
   );
+  // The unreadable field is still listed as a candidate, with the reason it cannot be used.
+  const candidate = probe.promptCandidates.find((item) => item.error === 'unreadable attribute');
+  assert.ok(candidate, 'the unreadable candidate is reported, not silently dropped');
+  assert.equal(candidate.rejection, 'unreadable');
 
   const report = await adapter.diagnose();
   const pageChecks = report.checks.find((check) => check.label === 'Page checks');

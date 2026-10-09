@@ -61,7 +61,12 @@ beforeEach(() => {
 test('probe reports the prompt box, Generate, settings and Agent state on a project page', async () => {
   const probe = await current.adapter.probe();
   assert.equal(probe.promptFound, true);
-  assert.equal(probe.promptStrategy, 'visible-textarea');
+  assert.equal(probe.promptStrategy, 'composer-textarea-by-region');
+  assert.equal(probe.promptEnabled, true);
+  assert.equal(probe.promptAmbiguous, false);
+  assert.equal(probe.workspaceDetected, true);
+  assert.equal(probe.flowPage, true);
+  assert.equal(probe.composerLayout, 'standard');
   assert.equal(probe.generateFound, true);
   assert.equal(probe.generateEnabled, false, 'Generate is disabled while the prompt is empty');
   assert.equal(probe.settingsFound, true);
@@ -73,6 +78,17 @@ test('probe reports the prompt box, Generate, settings and Agent state on a proj
   assert.deepEqual(probe.detectedSettings, { mode: null, model: 'Nano Banana Pro', aspectRatio: null });
   assert.equal(probe.agentOn, false);
   assert.equal(probe.isProjectPage, true);
+  // The composer evidence: every text field on the page, with why it is or is not the composer.
+  const composer = probe.promptCandidates.find((candidate) => candidate.tag === 'textarea');
+  assert.ok(composer, 'the textarea is listed as a candidate');
+  assert.equal(composer.rejection, null);
+  assert.equal(composer.visible, true);
+  assert.equal(composer.disabled, false);
+  assert.ok(composer.rect.width > 0, 'the candidate carries its bounding rectangle');
+  assert.ok(probe.promptReasons.length >= 2, `the selection says why: ${probe.promptReasons}`);
+  assert.ok(probe.selectorResults.some((row) => row.selector === 'textarea' && row.matched >= 1), 'selector results are reported');
+  assert.equal(probe.frames.inspected, 1);
+  assert.deepEqual(probe.exceptions, []);
 });
 
 test('probe reports Agent as on when its switch is on', async () => {
