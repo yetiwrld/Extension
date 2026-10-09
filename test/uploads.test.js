@@ -105,3 +105,15 @@ test('the failure lists every technique that was tried, in order', async () => {
     },
   );
 });
+
+test('the drop probe reports whether the page accepts dropped files, without dropping any', async () => {
+  const accepting = page({ uploadByDrop: true });
+  const diag = await accepting.adapter.diagnose();
+  assert.ok(diag.dropTargets.length, 'targets were probed');
+  assert.ok(diag.dropTargets.some((item) => item.acceptsDrop), 'the drop-accepting composer is reported');
+  assert.deepEqual(accepting.fixture.state.references, [], 'the probe never dropped a file');
+
+  const refusing = page({});
+  const diag2 = await refusing.adapter.diagnose();
+  assert.ok(diag2.dropTargets.every((item) => !item.acceptsDrop), 'a page that ignores dragover is reported as refusing');
+});

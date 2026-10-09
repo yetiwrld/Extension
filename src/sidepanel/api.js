@@ -41,6 +41,8 @@ export const RECOVERY_HINTS = Object.freeze({
   FLOW_BUSY: 'Let Flow finish its current work, then retry the scene.',
   REFERENCE_MISSING: 'Add the missing file to the reference library.',
   REFERENCE_AMBIGUOUS: 'Choose the file to use for the ambiguous reference.',
+  REFERENCE_MANUAL_REQUIRED:
+    'Flow will not take files from the extension on this page. Attach the named reference image(s) in Flow yourself, then press Resume \u2014 the scene continues from there.',
   REFERENCE_UPLOAD_FAILED: 'Check the reference images in Flow, then retry the scene.',
   REFERENCE_CLEAR_FAILED: 'Remove the old reference images in Flow manually, then retry.',
   PROMPT_INSERT_FAILED: 'Check the Flow prompt box, then retry the scene.',

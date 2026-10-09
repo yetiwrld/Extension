@@ -276,3 +276,43 @@ function makeDataEvent(view, type, transfer, property = 'dataTransfer') {
   return event;
 }
 
+
+/**
+ * Read-only probe: does this page accept dropped files, and where?
+ *
+ * A page that accepts a drop must call preventDefault() on `dragover` — that is the
+ * only way to become a drop target. So each candidate is sent dragenter + dragover
+ * carrying one tiny file and the result is read from `defaultPrevented`. The `drop`
+ * event is NEVER sent, so nothing is uploaded and nothing changes; a `dragleave`
+ * closes each probe. This is what distinguishes "Flow refuses synthetic drops" from
+ * "the drop went to the wrong element".
+ */
+export function probeDropAcceptance(doc, promptEl) {
+  const results = [];
+  let transfer = null;
+  try {
+    transfer = buildTransfer([{ name: 'probe.png', mime: 'image/png', base64: '' }]);
+  } catch {
+    return results;
+  }
+  for (const target of findDropTargets(doc, promptEl)) {
+    const view = target.ownerDocument?.defaultView;
+    if (!view) continue;
+    let prevented = false;
+    try {
+      target.dispatchEvent(makeDataEvent(view, 'dragenter', transfer));
+      const over = makeDataEvent(view, 'dragover', transfer);
+      target.dispatchEvent(over);
+      prevented = over.defaultPrevented;
+      target.dispatchEvent(makeDataEvent(view, 'dragleave', transfer));
+    } catch {
+      prevented = false;
+    }
+    results.push({
+      tag: target.tagName?.toLowerCase?.() ?? 'node',
+      classes: (target.getAttribute?.('class') ?? '').slice(0, 60),
+      acceptsDrop: prevented,
+    });
+  }
+  return results;
+}

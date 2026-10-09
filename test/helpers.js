@@ -161,6 +161,9 @@ export function scriptedFlow(script = {}) {
       Object.assign(state.settings, script.lockedSettings ?? {});
       return { current: { ...state.settings }, options: structuredClone(state.options), strategy: 'scripted' };
     },
+    async countReferences() {
+      return { attached: state.attached.length, promptFound: true };
+    },
     async clearReferences() {
       state.calls.push('clear');
       const removed = state.attached.length;

@@ -3,7 +3,7 @@ import { sleep as defaultSleep } from '../utils/async.js';
 import { FLOW_COMMANDS } from '../shared/protocol.js';
 import { applyFlowSettings, readFlowSettings } from './settings.js';
 import { insertPrompt } from './prompt.js';
-import { attachReferences, clearReferences, countAttachedReferences } from './references.js';
+import { attachReferences, clearReferences, countAttachedReferences, probeDropAcceptance } from './references.js';
 import { generationStatus as readGenerationStatus, snapshotOutputs as takeOutputSnapshot } from './outputs.js';
 import {
   candidateSummaries,
@@ -17,6 +17,7 @@ import {
   composerHostSummaries,
   findDetectedSettings,
   findProgressIndicators,
+  findPromptBox,
   inspectComposerArea,
   inspectFileInputs,
   inspectSettingsTrigger,
@@ -193,6 +194,9 @@ export function createFlowAdapter(options = {}) {
         // Flow's "Upload" item opens the OS dialog, which no extension can fill, so
         // this is what decides whether references can be attached at all.
         fileInputs: guarded('file inputs', () => inspectFileInputs(doc), []),
+        // Does the page accept dropped files, and where? Read-only: dragover only,
+        // never a drop, so nothing is uploaded by the diagnostic.
+        dropTargets: guarded('drop targets', () => (prompt ? probeDropAcceptance(doc, prompt.el) : []), []),
         referencesAttached: guarded('references', () => (prompt ? countAttachedReferences(doc, prompt.el) : 0), 0),
         outputsVisible: guarded('outputs', () => takeOutputSnapshot(doc).outputKeys.length, 0),
         issues,
@@ -308,6 +312,12 @@ export function createFlowAdapter(options = {}) {
       requirePrompt();
       const result = await applyFlowSettings(ctx, target);
       return result;
+    },
+
+    /** How many reference ("ingredient") chips Flow shows right now. */
+    async countReferences() {
+      const prompt = findPromptBox(doc);
+      return { attached: prompt ? countAttachedReferences(doc, prompt.el) : 0, promptFound: Boolean(prompt) };
     },
 
     async clearReferences() {

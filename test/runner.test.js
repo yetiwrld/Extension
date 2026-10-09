@@ -446,3 +446,37 @@ test('a menu failure still fails the scene when the chip does NOT verify the set
   const submitted = flow.state.calls.filter((call) => Array.isArray(call) && call[0] === 'submit');
   assert.equal(submitted.length, 0, 'no scene was generated with unverified settings');
 });
+
+test('a page that will not take files pauses the scene for a manual attach instead of failing it', async () => {
+  // Measured on the live page: Flow exposes no file input and refuses synthetic
+  // drops, so its uploader is an OS dialog no extension can fill. The scene must not
+  // be failed, and must never be generated without its references.
+  const { runner, store, flow } = await createRunner({ flowScript: { uploadFailures: 99 } });
+  await runner.start({ tabId: 1 });
+  await runner.whenIdle();
+  const automation = automationOf(store);
+  assert.equal(automation.phase, 'paused');
+  assert.equal(automation.decision.type, 'manual-reference');
+  assert.deepEqual(automation.decision.actions, ['resume', 'skip', 'stop']);
+  assert.match(automation.decision.message, /Attach the file\(s\) in Flow yourself/);
+  assert.equal(flow.state.submits.length, 0, 'nothing was generated without its references');
+});
+
+test('resuming after attaching the references by hand uses them and continues the scene', async () => {
+  const { runner, store, flow } = await createRunner({ flowScript: { uploadFailures: 99 } });
+  await runner.start({ tabId: 1 });
+  await runner.whenIdle();
+  assert.equal(automationOf(store).decision.type, 'manual-reference');
+  // The user attaches the files in Flow themselves.
+  flow.state.attached = ['Aron.png', 'Laboratory.png'];
+  const callsBefore = flow.state.calls.length;
+  await runner.resume();
+  await runner.whenIdle();
+  assert.ok(flow.state.submits.length >= 1, 'the scene was generated after the manual attach');
+  const afterResume = flow.state.calls.slice(callsBefore);
+  const uploadStep = afterResume.slice(0, afterResume.findIndex((call) => call === 'insertPrompt') + 1);
+  assert.ok(
+    !uploadStep.includes('clear') && !uploadStep.some((call) => Array.isArray(call) && call[0] === 'attach'),
+    `the manual references were reused, not cleared or re-uploaded: ${JSON.stringify(uploadStep)}`,
+  );
+});

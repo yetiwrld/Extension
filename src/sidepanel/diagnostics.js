@@ -99,6 +99,19 @@ export function formatDiagnosticsReport(d) {
     if (!inputs.length) {
       lines.push(' - none right now; Flow usually mounts one when the Add menu opens (the extension opens it, it never uses Flow\'s OS file dialog)');
     }
+    const drops = Array.isArray(d.dropTargets) ? d.dropTargets : [];
+    if (drops.length) {
+      const accepting = drops.filter((item) => item.acceptsDrop);
+      lines.push(
+        ` - drag-and-drop: ${accepting.length ? `${accepting.length} of ${drops.length} target(s) accept dropped files` : `NO target accepts dropped files (${drops.length} probed)`}`,
+      );
+      for (const item of drops) {
+        lines.push(`   · <${item.tag}${item.classes ? ` class="${item.classes}"` : ''}>: ${item.acceptsDrop ? 'accepts a drop' : 'does not accept a drop'}`);
+      }
+      if (!accepting.length) {
+        lines.push('   · consequence: Flow takes files only through its own file dialog here; the run pauses and asks you to attach them by hand.');
+      }
+    }
     for (const item of inputs) {
       lines.push(
         ` - ${item.scope}${item.inComposer ? ', in the composer' : ''}: accepts ${item.accept || 'anything'}, ${item.multiple ? 'multiple' : 'single'}, ${item.disabled ? 'disabled' : 'enabled'}, ${item.visible ? 'visible' : 'hidden'}`,

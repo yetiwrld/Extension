@@ -646,6 +646,8 @@ export function installFlowFixture(
   if (uploadByDrop) {
     // The composer accepts dropped files, like the live page does.
     const dropTarget = doc.getElementById('prompt-box') ?? doc.body;
+    // A real drop target must preventDefault on dragover; that is what makes it one.
+    dropTarget.addEventListener('dragover', (event) => event.preventDefault());
     dropTarget.addEventListener('drop', (event) => {
       for (const file of Array.from(event.dataTransfer?.files ?? [])) addChip(file.name);
     });

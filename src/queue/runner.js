@@ -64,6 +64,7 @@ const PAUSE_CODES = new Set([
   ERROR_CODES.INTERRUPTED,
   ERROR_CODES.FLOW_AGENT_ON,
   ERROR_CODES.FLOW_AGENT_ONLY,
+  ERROR_CODES.REFERENCE_MANUAL_REQUIRED,
 ]);
 
 export class AutomationRunner {
@@ -635,23 +636,76 @@ export class AutomationRunner {
       return;
     }
     const payloads = await this.files.load(ids);
+    const names = payloads.map((item) => item.name).join(', ');
+
+    // Resuming after a manual-attach pause: Flow's own chips are the proof, and the
+    // references the user attached must NOT be cleared away first.
+    if (this.manualReferenceScenes?.has(scene.id)) {
+      const status = await this.flow.countReferences();
+      if ((status?.attached ?? 0) >= payloads.length) {
+        this.manualReferenceScenes.delete(scene.id);
+        await this.log('info', `Scene ${scene.numberLabel}: using the ${pluralize(payloads.length, 'reference')} attached in Flow by hand.`, scene.id);
+        return;
+      }
+      throw new AutomationError(
+        ERROR_CODES.REFERENCE_MANUAL_REQUIRED,
+        `Flow still shows ${status?.attached ?? 0} of ${pluralize(payloads.length, 'reference')} for Scene ${scene.numberLabel}. Attach ${names} in Flow, then press Resume.`,
+      );
+    }
+
     // Clear again right before attaching: a resumed scene must carry exactly its own references.
     const cleared = await this.flow.clearReferences();
     if ((cleared?.remaining ?? 0) > 0) {
       throw new AutomationError(ERROR_CODES.REFERENCE_CLEAR_FAILED, `Could not remove ${pluralize(cleared.remaining, 'reference')} before uploading.`);
     }
-    const result = await this.flow.attachReferences(payloads);
+    let result = null;
+    let uploadError = null;
+    try {
+      result = await this.flow.attachReferences(payloads);
+    } catch (error) {
+      if (error?.code !== ERROR_CODES.REFERENCE_UPLOAD_FAILED) throw error;
+      uploadError = error;
+    }
     const attached = result?.attached ?? 0;
-    if (attached < payloads.length) {
-      throw new AutomationError(
-        ERROR_CODES.REFERENCE_UPLOAD_FAILED,
-        `Flow confirmed ${attached} of ${pluralize(payloads.length, 'reference file')} for Scene ${scene.numberLabel}.`,
+    if (!uploadError && attached >= payloads.length) {
+      // Name the technique Flow accepted: on a page with no file input the run uses a
+      // drop or a paste, and that fact belongs in the log rather than in a guess.
+      const how = result?.strategy ? ` (via ${result.strategy})` : '';
+      await this.log('info', `Scene ${scene.numberLabel}: uploaded ${names}${how}.`, scene.id);
+      return;
+    }
+    // The first failure may be transient (Flow still busy with the previous scene):
+    // let the normal single automatic retry happen before concluding anything.
+    this.uploadAttempts = this.uploadAttempts ?? new Map();
+    const attempts = (this.uploadAttempts.get(scene.id) ?? 0) + 1;
+    this.uploadAttempts.set(scene.id, attempts);
+    if (attempts < 2) {
+      throw (
+        uploadError ??
+        new AutomationError(
+          ERROR_CODES.REFERENCE_UPLOAD_FAILED,
+          `Flow confirmed ${attached} of ${pluralize(payloads.length, 'reference file')} for Scene ${scene.numberLabel}.`,
+        )
       );
     }
-    // Name the technique Flow accepted: on a page with no file input the run uses a
-    // drop or a paste, and that fact belongs in the log rather than in a guess.
-    const how = result?.strategy ? ` (via ${result.strategy})` : '';
-    await this.log('info', `Scene ${scene.numberLabel}: uploaded ${payloads.map((item) => item.name).join(', ')}${how}.`, scene.id);
+    // Flow would not take the files from the extension. That is a real limitation of
+    // this page (its uploader is an OS file dialog), not a scene error: the run PAUSES
+    // and asks for the files to be attached by hand, instead of failing the scene and
+    // instead of generating a scene without its references.
+    this.manualReferenceScenes = this.manualReferenceScenes ?? new Set();
+    this.manualReferenceScenes.add(scene.id);
+    const detail = uploadError ? ` ${uploadError.message}` : ` Flow confirmed ${attached} of ${pluralize(payloads.length, 'reference file')}.`;
+    throw new AutomationError(
+      ERROR_CODES.REFERENCE_MANUAL_REQUIRED,
+      `Flow did not accept ${names} from the extension for Scene ${scene.numberLabel}.${detail} ` +
+        'Attach the file(s) in Flow yourself (Add ingredients), then press Resume to continue this scene.',
+    );
+  }
+
+  /** Forget the upload bookkeeping for a scene that is starting over. */
+  resetUploadState(sceneId) {
+    this.uploadAttempts?.delete(sceneId);
+    this.manualReferenceScenes?.delete(sceneId);
   }
 
   /**
@@ -1087,6 +1141,8 @@ export class AutomationRunner {
         return { ...base, type: 'agent-only', title: 'Flow shows only the Agent composer', actions: ['resume', 'stop'] };
       case ERROR_CODES.INTERRUPTED:
         return { ...base, type: 'interrupted', title: 'Interrupted', actions: ['resume', 'stop'] };
+      case ERROR_CODES.REFERENCE_MANUAL_REQUIRED:
+        return { ...base, type: 'manual-reference', title: 'Attach the reference in Flow', actions: ['resume', 'skip', 'stop'] };
       case ERROR_CODES.REFERENCE_MISSING:
       case ERROR_CODES.REFERENCE_AMBIGUOUS:
         return { ...base, type: 'missing-reference', title: 'Reference needs attention', actions: ['retry', 'skip', 'stop'] };
