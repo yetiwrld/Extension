@@ -153,6 +153,34 @@ export function isFlowUrl(url) {
   }
 }
 
+/** Move Chrome's real pointer over an element so hover-only Flow controls are rendered. */
+export async function dispatchTrustedHover(chromeApi, tabId, point) {
+  if (!chromeApi.debugger || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return false;
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chromeApi.debugger.attach(target, '1.3');
+    attached = true;
+    await chromeApi.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: point.x,
+      y: point.y,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (attached) {
+      try {
+        await chromeApi.debugger.detach(target);
+      } catch {
+        // Chrome also detaches automatically when a tab closes.
+      }
+    }
+  }
+}
+
 /** Dispatch a genuine browser-level click. Flow ignores synthetic DOM clicks on some accounts. */
 export async function dispatchTrustedClick(chromeApi, tabId, point) {
   if (!chromeApi.debugger || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return false;
@@ -271,6 +299,18 @@ export function createFlowBridge({ getTabId, chromeApi = globalThis.chrome, time
     const tab = await resolveTab();
     const trusted = await dispatchTrustedClick(chromeApi, tab.id, result?.clickTarget);
     return { ...result, accepted: trusted, fallback: trusted ? 'cdp-trusted-click' : result?.fallback };
+  };
+  // Flow often renders a card's three-dot menu only for a real pointer hover. If the
+  // in-page pass cannot reveal it, move Chrome's pointer over the exact new output,
+  // then retry the download command once without changing tabs or outputs.
+  port.downloadLatest2k = async (payload) => {
+    const timeout = commandTimeoutMs('downloadLatest2k', payload, timeoutMs);
+    const result = await call('downloadLatest2k', payload, { timeout });
+    if (result?.requested || result?.retry !== 'trusted-hover') return result;
+    const tab = await resolveTab();
+    const hovered = await dispatchTrustedHover(chromeApi, tab.id, result.hoverTarget);
+    if (!hovered) return result;
+    return call('downloadLatest2k', { ...payload, trustedHover: true }, { timeout });
   };
   port.diagnose = () => call('diagnose', null, { timeout: 15000 });
   /** Diagnostics for a specific tab (used before any tab is bound). */

@@ -14,7 +14,7 @@ import { AutomationError } from '../src/utils/errors.js';
 const S = SCENE_STATUS;
 
 test('the sequential scene path is allowed', () => {
-  const path = [S.WAITING, S.PREPARING, S.UPLOADING, S.INSERTING, S.SUBMITTING, S.GENERATING, S.COMPLETED];
+  const path = [S.WAITING, S.PREPARING, S.UPLOADING, S.INSERTING, S.SUBMITTING, S.GENERATING, S.DOWNLOADING, S.COMPLETED];
   for (let i = 0; i < path.length - 1; i += 1) {
     assert.ok(canSceneTransition(path[i], path[i + 1]), `${path[i]} -> ${path[i + 1]}`);
   }
@@ -38,7 +38,7 @@ test('COMPLETED requires observed evidence', () => {
     assert.equal(error.code, 'INVALID_STATE');
     return true;
   });
-  assert.doesNotThrow(() => assertSceneTransition(S.GENERATING, S.COMPLETED, { evidence: { observedAt: 1 } }));
+  assert.doesNotThrow(() => assertSceneTransition(S.DOWNLOADING, S.COMPLETED, { evidence: { observedAt: 1 } }));
   assert.doesNotThrow(() => assertSceneTransition(S.FAILED, S.COMPLETED, { evidence: { manual: true } }));
 });
 

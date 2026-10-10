@@ -117,8 +117,12 @@ export class Controller {
     }
   }
 
-  async checkFlow({ autoRead = false } = {}) {
-    const status = await checkFlowConnection({ chromeApi: this.chromeApi, now: this.now });
+  async checkFlow({ autoRead = false, useActiveTab = false } = {}) {
+    const automation = this.store.read(K.automation);
+    const locked = !useActiveTab && (isActivePhase(automation.phase) || automation.phase === SESSION_PHASE.PAUSED)
+      ? automation.tabId
+      : null;
+    const status = await checkFlowConnection({ chromeApi: this.chromeApi, now: this.now, tabId: locked });
     await this.chromeApi.storage.session.set({ [SESSION_CONNECTION_KEY]: status });
     if (autoRead && status.status === 'connected' && status.promptFound) {
       this.readSettingsOnceFor(status.tabId);
@@ -172,10 +176,12 @@ export class Controller {
     return this.store.read(K.flowSettings);
   }
 
-  /** Point the automation at a tab, unless a run is active (a run keeps its own tab). */
+  /** Point automation at a tab only when no run owns one. Paused runs keep their lock. */
   async bindTab(tabId) {
     if (tabId == null) return;
-    await this.store.update(K.automation, (automation) => (isActivePhase(automation.phase) ? automation : { ...automation, tabId }));
+    await this.store.update(K.automation, (automation) =>
+      (isActivePhase(automation.phase) || automation.phase === SESSION_PHASE.PAUSED) ? automation : { ...automation, tabId },
+    );
   }
 
   async diagnoseFlow() {
@@ -322,7 +328,7 @@ export class Controller {
 
   async start() {
     return this.withFlowCommand(async () => {
-      const status = await this.checkFlow();
+      const status = await this.checkFlow({ useActiveTab: true });
       if (status.status !== 'connected') {
         throw new AutomationError(ERROR_CODES.FLOW_NOT_CONNECTED, `${status.message} Then press Start again.`);
       }
@@ -344,7 +350,7 @@ export class Controller {
   /** Bind the active Flow tab for commands that may launch the loop, when nothing is running. */
   async bindThen(task) {
     const { phase } = this.store.read(K.automation);
-    if (!isActivePhase(phase)) {
+    if (!isActivePhase(phase) && phase !== SESSION_PHASE.PAUSED) {
       const status = await this.checkFlow();
       await this.bindTab(status.tabId);
     }

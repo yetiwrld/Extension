@@ -90,6 +90,17 @@ test('connection reads "Connected" only when the active tab is Flow and its conn
   const silent = await checkFlowConnection({ chromeApi: fakeChrome({ respond: false }) });
   assert.equal(silent.status, 'not_connected');
   assert.match(silent.message, /Reload the Flow tab/);
+
+  const switched = fakeChrome({
+    tabs: [
+      { ...FLOW_TAB, active: false },
+      { id: 8, url: 'https://example.com/', active: true },
+    ],
+  });
+  const locked = await checkFlowConnection({ chromeApi: switched, tabId: 7 });
+  assert.equal(locked.status, 'connected');
+  assert.equal(locked.tabId, 7);
+  assert.match(locked.message, /Locked/);
 });
 
 test('the bridge reports a closed tab as FLOW_TAB_CLOSED so the queue pauses instead of failing', async () => {

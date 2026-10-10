@@ -16,6 +16,10 @@ export async function downloadLatest2k(ctx, evidence = {}) {
     throw new AutomationError(ERROR_CODES.DOWNLOAD_FAILED, 'The generated image could not be found for its 2K download.');
   }
 
+  // Start on the media itself so hover listeners on any wrapping card receive the
+  // bubbling events before we decide which ancestor owns the controls.
+  hover(output.el);
+  await ctx.sleep(ctx.timings.settleMs);
   const card = findOutputCard(output.el);
   hover(card);
   await ctx.sleep(ctx.timings.settleMs);
@@ -25,7 +29,11 @@ export async function downloadLatest2k(ctx, evidence = {}) {
   if (downloadControl) {
     clickElement(downloadControl);
   } else {
-    const menuButton = await waitForValue(() => findCardMenuButton(card), {
+    const menuButton = await waitForValue(() => {
+      hover(output.el);
+      hover(card);
+      return findCardMenuButton(card);
+    }, {
       timeoutMs: ctx.timings.popoverMs * 2,
       intervalMs: 150,
       sleep: ctx.sleep,
@@ -45,6 +53,9 @@ export async function downloadLatest2k(ctx, evidence = {}) {
       // Hovering opens its quality submenu.
       hover(downloadControl);
     } else {
+      if (!evidence.trustedHover) {
+        return { requested: false, retry: 'trusted-hover', hoverTarget: centerOf(output.el), outputKey: output.key };
+      }
       // Some variants expose Download media only after opening the selected output.
       // Open the exact newly completed media first; only then is a page-level control safe.
       const priorControls = new Set(findGlobalDownloadMediaButtons(ctx.doc));
@@ -77,7 +88,7 @@ export async function downloadLatest2k(ctx, evidence = {}) {
   }
 
   clickElement(upscale);
-  await ctx.sleep(Math.max(ctx.timings.settleMs, 1000));
+  await ctx.sleep(Math.max(ctx.timings.settleMs, 2000));
   return { requested: true, quality: '2K Upscaled', outputKey: output.key };
 }
 
@@ -129,15 +140,26 @@ function isDisabledLike(el) {
   return Boolean(el.disabled) || el.getAttribute('aria-disabled') === 'true' || el.closest('[aria-disabled="true"]');
 }
 
+function centerOf(el) {
+  const rect = el.getBoundingClientRect();
+  return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+}
+
 function hover(el) {
   if (!el) return;
   el.scrollIntoView?.({ block: 'center', inline: 'nearest' });
   const view = el.ownerDocument.defaultView;
-  const init = { bubbles: true, cancelable: true, composed: true, view };
+  const rect = el.getBoundingClientRect();
+  const clientX = rect.left + rect.width / 2;
+  const clientY = rect.top + rect.height / 2;
+  const init = { bubbles: true, cancelable: true, composed: true, view, clientX, clientY, screenX: clientX, screenY: clientY };
   const PointerCtor = view.PointerEvent || view.MouseEvent;
   el.dispatchEvent(new PointerCtor('pointerover', { ...init, pointerType: 'mouse' }));
+  el.dispatchEvent(new PointerCtor('pointerenter', { ...init, bubbles: false, pointerType: 'mouse' }));
+  el.dispatchEvent(new PointerCtor('pointermove', { ...init, pointerType: 'mouse' }));
   el.dispatchEvent(new view.MouseEvent('mouseover', init));
   el.dispatchEvent(new view.MouseEvent('mouseenter', { ...init, bubbles: false }));
   el.dispatchEvent(new view.MouseEvent('mousemove', init));
+  el.focus?.({ preventScroll: true });
 }
 

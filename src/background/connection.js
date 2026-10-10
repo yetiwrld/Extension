@@ -8,15 +8,25 @@ const PROBE_TIMEOUT_MS = 8000;
 
 /**
  * Connection status for the side panel's "● Connected / ○ Not Connected" line.
- * "Connected" means: the active tab in the focused window is a Flow page AND its
- * content script answers. Nothing is typed in by the user; no project ID is needed.
+ * Before a run, "Connected" means the active tab is Flow and its content script answers.
+ * During a run (including pauses), callers pass the locked tab ID so changing the active
+ * browser tab cannot redirect automation.
  *
  * @returns {Promise<{status: 'connected'|'not_connected', tabId: number|null, url: string|null,
  *                    message: string, checkedAt: number, promptFound: boolean}>}
  */
-export async function checkFlowConnection({ chromeApi = globalThis.chrome, now = () => Date.now() } = {}) {
+export async function checkFlowConnection({ chromeApi = globalThis.chrome, now = () => Date.now(), tabId = null } = {}) {
   const checkedAt = now();
-  const [tab] = await chromeApi.tabs.query({ active: true, lastFocusedWindow: true });
+  let tab;
+  if (tabId != null) {
+    try {
+      tab = await chromeApi.tabs.get(tabId);
+    } catch {
+      return notConnected(tabId, null, 'The locked Flow tab was closed. Reopen Flow and stop this run before selecting another tab.', checkedAt);
+    }
+  } else {
+    [tab] = await chromeApi.tabs.query({ active: true, lastFocusedWindow: true });
+  }
   if (!tab) {
     return notConnected(null, null, 'No active tab. Click a Flow tab to connect.', checkedAt);
   }
@@ -29,7 +39,9 @@ export async function checkFlowConnection({ chromeApi = globalThis.chrome, now =
       status: 'connected',
       tabId: tab.id,
       url: tab.url,
-      message: probe.promptFound ? 'Connected to Flow.' : 'Connected to Flow. Open a project to find the prompt box.',
+      message: probe.promptFound
+        ? (tabId != null ? 'Locked to Flow tab.' : 'Connected to Flow.')
+        : 'Connected to Flow. Open a project to find the prompt box.',
       checkedAt,
       promptFound: Boolean(probe.promptFound),
       projectPage: Boolean(probe.isProjectPage),

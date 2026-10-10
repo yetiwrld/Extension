@@ -161,7 +161,11 @@ export class AutomationRunner {
       throw new AutomationError(ERROR_CODES.INVALID_STATE, 'Automation is not paused.');
     }
     await this.assertReady();
-    await this.enterConnecting({ tabId, message: 'Reconnecting to Flow\u2026' });
+    const lockedTabId = this.automation().tabId;
+    if (lockedTabId == null) {
+      throw new AutomationError(ERROR_CODES.FLOW_NOT_CONNECTED, 'This run has no locked Flow tab. Stop it, open Flow, and start again.');
+    }
+    await this.enterConnecting({ tabId: lockedTabId, message: 'Reconnecting to the locked Flow tab\u2026' });
     await this.log('info', 'Resuming automation.');
     this.launch();
   }
@@ -320,6 +324,9 @@ export class AutomationRunner {
         } else if (scene.status === S.GENERATING) {
           assertSceneTransition(scene.status, S.PAUSED);
           Object.assign(scene, { status: S.PAUSED, resumeStep: S.GENERATING, detail: 'Interrupted while waiting for Flow. Resume to keep waiting.' });
+        } else if (scene.status === S.DOWNLOADING) {
+          assertSceneTransition(scene.status, S.PAUSED);
+          Object.assign(scene, { status: S.PAUSED, resumeStep: S.DOWNLOADING, detail: 'Generation is complete. Resume retries only its 2K download.' });
         } else if ([S.PREPARING, S.UPLOADING, S.INSERTING, S.RETRYING].includes(scene.status)) {
           const resumeStep = scene.status === S.RETRYING ? S.PREPARING : scene.status;
           assertSceneTransition(scene.status, S.PAUSED);
@@ -471,6 +478,20 @@ export class AutomationRunner {
         new AutomationError(isMissing ? ERROR_CODES.REFERENCE_MISSING : ERROR_CODES.REFERENCE_AMBIGUOUS, message, { recoverable: false }),
       );
       return { type: 'failed', decision };
+    }
+
+    if (scene.status === S.PAUSED && scene.resumeStep === S.DOWNLOADING) {
+      if (!scene.generationEvidence?.outputKeys?.length) {
+        const decision = await this.failScene(
+          sceneId,
+          new AutomationError(ERROR_CODES.INVALID_STATE, 'The completed output record is missing. Download it manually before continuing.'),
+          { verify: true },
+        );
+        return { type: 'failed', decision };
+      }
+      await this.setScene(sceneId, S.DOWNLOADING, { detail: 'Requesting the native 2K upscaled download.' });
+      await this.log('info', `Scene ${scene.numberLabel}: retrying only its 2K download; generation will not run again.`, sceneId);
+      return this.downloadCompletedOutput(sceneId, scene.generationEvidence);
     }
 
     if (scene.status === S.PAUSED && scene.resumeStep === S.GENERATING) {
@@ -774,35 +795,15 @@ export class AutomationRunner {
     switch (result.outcome) {
       case 'completed': {
         const evidence = { ...result.evidence, manual: false };
-        let downloaded = false;
-        let downloadError = null;
-        for (let attempt = 1; attempt <= 3 && !downloaded; attempt += 1) {
-          try {
-            await this.flow.downloadLatest2k(evidence);
-            downloaded = true;
-          } catch (error) {
-            downloadError = error;
-            if (attempt < 3) await this.clock.sleep(2000);
-          }
-        }
-        await this.recordCompletion(sceneId, evidence);
-        if (downloaded) {
-          await this.log('success', `Scene ${scene.numberLabel} completed and its 2K upscaled image download was requested.`, sceneId);
-          return { type: 'completed' };
-        }
-        const payload = toErrorPayload(downloadError);
-        await this.log('error', `Scene ${scene.numberLabel} completed, but its 2K download failed: ${payload.message}`, sceneId);
-        return {
-          type: 'paused',
-          decision: {
-            type: 'download-failed',
-            sceneId,
-            code: payload.code,
-            title: `Scene ${scene.numberLabel} download failed`,
-            message: `${payload.message} The image is complete and will not be regenerated. Download it manually, then press Continue.`,
-            actions: ['continue', 'stop'],
-          },
-        };
+        // Persist this checkpoint before touching download controls. If Chrome suspends the
+        // worker now, Resume returns to DOWNLOADING and can never submit this scene again.
+        await this.setScene(sceneId, S.DOWNLOADING, {
+          detail: 'Generation complete. Requesting the native 2K upscaled download.',
+          resumeStep: S.DOWNLOADING,
+          generationEvidence: evidence,
+          error: null,
+        });
+        return this.downloadCompletedOutput(sceneId, evidence);
       }
       case 'failed': {
         const decision = await this.failScene(
@@ -829,6 +830,41 @@ export class AutomationRunner {
       default:
         throw new AutomationError(ERROR_CODES.INVALID_STATE, `Unexpected wait outcome "${result.outcome}".`, { recoverable: false });
     }
+  }
+
+  /** Download a generation already known to be complete. This method never submits. */
+  async downloadCompletedOutput(sceneId, evidence) {
+    const scene = this.findScene(sceneId);
+    let downloadError = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const download = await this.flow.downloadLatest2k(evidence);
+        if (!download?.requested) {
+          throw new AutomationError(ERROR_CODES.DOWNLOAD_FAILED, 'Could not reveal the generated image download controls.');
+        }
+        await this.recordCompletion(sceneId, { ...evidence, downloadRequestedAt: this.clock.now() });
+        await this.log('success', `Scene ${scene.numberLabel} completed and its 2K upscaled image download was requested.`, sceneId);
+        return { type: 'completed' };
+      } catch (error) {
+        downloadError = error;
+        if (attempt < 3) await this.clock.sleep(2000);
+      }
+    }
+
+    const payload = toErrorPayload(downloadError);
+    await this.pauseScene(sceneId, S.DOWNLOADING, `Generation complete; 2K download still pending: ${payload.message}`);
+    await this.log('error', `Scene ${scene.numberLabel} completed, but its 2K download failed: ${payload.message}`, sceneId);
+    return {
+      type: 'paused',
+      decision: {
+        type: 'download-failed',
+        sceneId,
+        code: payload.code,
+        title: `Scene ${scene.numberLabel} download failed`,
+        message: `${payload.message} The image is complete and will not be regenerated. Press Resume to retry only this download.`,
+        actions: ['resume', 'stop'],
+      },
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -1017,6 +1053,8 @@ export class AutomationRunner {
             Object.assign(scene, { status: S.FAILED, resumeStep: null, error: { ...payload, at: this.clock.now() }, detail: payload.message });
           } else if (scene.status === S.GENERATING) {
             Object.assign(scene, { status: S.PAUSED, resumeStep: S.GENERATING, detail: 'Paused after an unexpected error. Resume to keep waiting.' });
+          } else if (scene.status === S.DOWNLOADING) {
+            Object.assign(scene, { status: S.PAUSED, resumeStep: S.DOWNLOADING, detail: 'Generation is complete. Resume retries only its 2K download.' });
           } else if ([S.PREPARING, S.UPLOADING, S.INSERTING, S.RETRYING].includes(scene.status)) {
             const resumeStep = scene.status === S.RETRYING ? S.PREPARING : scene.status;
             Object.assign(scene, { status: S.PAUSED, resumeStep, detail: 'Paused after an unexpected error.' });

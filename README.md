@@ -37,13 +37,13 @@ previous output. It uses your existing Flow session. It stores no Google credent
   an **Add** button for that exact name. A bare name that fits several files (for example `Aron`
   when `Aron.png` and `Aron_Closeup.png` both exist) is never picked automatically. You choose the
   file in the scene row.
-- **Queue.** Statuses: Waiting, Preparing, Uploading, Generating, Completed, Failed, Retrying,
-  Paused, Skipped (symbols ● ○ ✓ ⚠ ✕ ▶ ⏸ ■).
+- **Queue.** Statuses: Waiting, Preparing, Uploading, Generating, Downloading 2K, Completed, Failed,
+  Retrying, Paused, Skipped (symbols ● ○ ✓ ⚠ ✕ ▶ ↓ ⏸ ■).
 - **Flow settings.** Mode, Model and Aspect ratio are read from Flow's own settings menu. Changing a
   value in the panel changes it in Flow. Options are only what Flow exposes. Settings are re-applied
   and verified before each scene.
-- **Connection.** `● Connected` when the active tab is a Flow page whose connector answers,
-  otherwise `○ Not Connected`. No project ID is entered.
+- **Connection.** Before Start, `● Connected` follows the active Flow tab. Start locks that exact
+  tab for the whole run—including pauses—so switching tabs or windows cannot redirect automation.
 - **Controls.** Start (with optional confirmation), Pause (takes effect at a safe point), Resume,
   Stop. On a failed scene the queue pauses and offers **Retry**, **Skip**, **Mark completed** (only
   when you have checked Flow), or **Stop**.
@@ -122,7 +122,8 @@ references. `none` means no references. Text before the first marker is ignored,
 | INSERTING_PROMPT | scene status `inserting` (shown as "Preparing") |
 | GENERATING | scene status `submitting` (shown as "Generating") then `generating` |
 | WAITING_FOR_COMPLETION | scene status `generating` |
-| COMPLETED | scene status `completed`. Requires recorded evidence |
+| DOWNLOADING_2K | scene status `downloading`; generation evidence is already persisted, so Resume can only retry the download |
+| COMPLETED | scene status `completed`. Requires recorded evidence and a requested native 2K download |
 | NEXT_SCENE | the next waiting scene enters `preparing` |
 | ERROR → PAUSED | session phase `error`, then `paused` with a decision the user resolves |
 

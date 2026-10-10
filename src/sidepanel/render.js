@@ -13,6 +13,7 @@ export const STATUS = Object.freeze({
   inserting: { icon: '▶', label: 'Preparing', active: true },
   submitting: { icon: '▶', label: 'Generating', active: true },
   generating: { icon: '▶', label: 'Generating', active: true },
+  downloading: { icon: '↓', label: 'Downloading 2K', active: true },
   completed: { icon: '✓', label: 'Completed', active: false },
   failed: { icon: '✕', label: 'Failed', active: false },
   retrying: { icon: '⚠', label: 'Retrying', active: false },

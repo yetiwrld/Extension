@@ -262,10 +262,18 @@ test('an unavailable 2K option pauses after completion without regenerating or s
   await runner.whenIdle();
 
   assert.equal(flow.state.submits.length, 1);
-  assert.equal(queueOf(store).scenes[0].status, 'completed');
+  assert.equal(queueOf(store).scenes[0].status, 'paused');
+  assert.equal(queueOf(store).scenes[0].resumeStep, 'downloading');
   assert.equal(queueOf(store).scenes[1].status, 'waiting');
   assert.equal(automationOf(store).phase, 'paused');
   assert.equal(automationOf(store).decision.type, 'download-failed');
+
+  flow.state.downloadFailuresLeft = 0;
+  await runner.resume({ tabId: 999 }); // A different active tab must not replace the run's lock.
+  await runner.whenIdle();
+  assert.equal(flow.state.submits.length, 4, 'resume downloads Scene 01, then submits each remaining scene once');
+  assert.deepEqual(flow.state.downloads, ['out-1', 'out-2', 'out-3', 'out-4']);
+  assert.equal(automationOf(store).tabId, 7);
 });
 
 test('a lost Flow tab pauses the queue (it does not fail the scene)', async () => {
@@ -346,6 +354,29 @@ test('after a worker restart an active run is converted to a paused state the us
   assert.equal(automation.decision.type, 'interrupted');
   assert.equal(sceneByNumber(store, 1).status, 'paused');
   assert.equal(sceneByNumber(store, 1).resumeStep, 'generating');
+});
+
+test('a worker restart during download resumes only the download and never resubmits that scene', async () => {
+  const { runner, store, flow } = await createRunner({
+    initialAutomation: { phase: 'running', tabId: 7, currentSceneId: null, decision: null, message: '', progress: null },
+  });
+  const firstId = queueOf(store).scenes[0].id;
+  await store.update(STORAGE_KEYS.queue, (queue) => {
+    queue.scenes[0].status = 'downloading';
+    queue.scenes[0].resumeStep = 'downloading';
+    queue.scenes[0].generationEvidence = { observedAt: 1, outputKeys: ['out-1'], newOutputs: 1 };
+    return queue;
+  });
+  await store.update(STORAGE_KEYS.automation, (automation) => ({ ...automation, currentSceneId: firstId }));
+
+  await runner.recoverAfterRestart();
+  assert.equal(sceneByNumber(store, 1).resumeStep, 'downloading');
+  await runner.resume({ tabId: 999 });
+  await runner.whenIdle();
+
+  assert.deepEqual(flow.state.downloads, ['out-1', 'out-1', 'out-2', 'out-3']);
+  assert.equal(flow.state.submits.length, 3, 'only the remaining scenes are submitted');
+  assert.equal(automationOf(store).tabId, 7);
 });
 
 test('a submission interrupted by a worker restart is failed for review, never re-clicked', async () => {

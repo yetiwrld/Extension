@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createFlowBridge,
   dispatchTrustedClick,
+  dispatchTrustedHover,
   isNoReceiverError,
   isNotDeliveredError,
   INJECT_FAILED_MESSAGE,
@@ -61,6 +62,20 @@ test('trusted Generate fallback dispatches one CDP mouse click and always detach
   ]);
   assert.equal(commands[1].params.type, 'mousePressed');
   assert.equal(commands[2].params.type, 'mouseReleased');
+});
+
+test('trusted download hover moves Chrome\'s pointer without clicking', async () => {
+  const commands = [];
+  const chromeApi = {
+    debugger: {
+      attach: async () => {},
+      sendCommand: async (_target, method, params) => commands.push({ method, params }),
+      detach: async () => commands.push({ method: 'detach' }),
+    },
+  };
+  assert.equal(await dispatchTrustedHover(chromeApi, 7, { x: 120, y: 240 }), true);
+  assert.deepEqual(commands.map((item) => item.method), ['Input.dispatchMouseEvent', 'detach']);
+  assert.equal(commands[0].params.type, 'mouseMoved');
 });
 
 test('a command is never sent again after its reply was lost, because it may already have run', async () => {

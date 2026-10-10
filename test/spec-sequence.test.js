@@ -22,6 +22,7 @@ const SCENE_SPEC_PATH = [
   SCENE_STATUS.INSERTING, // INSERTING_PROMPT
   SCENE_STATUS.SUBMITTING, // GENERATING (Generate has been clicked)
   SCENE_STATUS.GENERATING, // WAITING_FOR_COMPLETION
+  SCENE_STATUS.DOWNLOADING, // output observed; native 2K download still required
   SCENE_STATUS.COMPLETED, // COMPLETED (only with evidence, see states-completion tests)
 ];
 

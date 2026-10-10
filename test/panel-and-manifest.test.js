@@ -48,7 +48,7 @@ test('status symbols and labels follow the specification', () => {
   assert.equal(symbols.retrying, '⚠');
   assert.deepEqual(
     Object.values(R.STATUS).map((value) => value.label).filter((label, index, all) => all.indexOf(label) === index).sort(),
-    ['Completed', 'Failed', 'Generating', 'Paused', 'Preparing', 'Retrying', 'Skipped', 'Uploading', 'Waiting'],
+    ['Completed', 'Downloading 2K', 'Failed', 'Generating', 'Paused', 'Preparing', 'Retrying', 'Skipped', 'Uploading', 'Waiting'],
   );
 });
 
