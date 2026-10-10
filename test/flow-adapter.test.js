@@ -92,6 +92,65 @@ test('readSettings returns Flow\'s current values and the options it exposes, th
   assert.equal(current.window.document.querySelector('[role="menu"]'), null, 'popover must be closed');
 });
 
+test('reads the current settings from the composer chip when the new Flow chip has no menu', async () => {
+  const oldButton = current.window.document.getElementById('settings-btn');
+  const chip = oldButton.cloneNode(false);
+  chip.id = 'settings-btn';
+  chip.className = 'settings-trigger-button';
+  chip.removeAttribute('aria-haspopup');
+  chip.removeAttribute('aria-expanded');
+  chip.setAttribute('aria-label', 'Settings trigger');
+  chip.innerHTML = '<span>🍌 Nano Banana 2.1</span><mat-icon aria-label="crop_16_9">crop_16_9</mat-icon><span>x1</span>';
+  oldButton.replaceWith(chip); // cloning deliberately removes the fixture's menu listener
+
+  const result = await current.adapter.readSettings();
+  assert.deepEqual(result.current, { mode: 'Image', model: 'Nano Banana 2.1', aspectRatio: '16:9' });
+  assert.deepEqual(result.options, { mode: ['Image'], model: ['Nano Banana 2.1'], aspectRatio: ['16:9'] });
+  assert.match(result.strategy, /composer-chip/);
+
+  // Re-applying values already displayed by Flow must not require a menu. This
+  // is the path used before every queued scene.
+  const unchanged = await current.adapter.applySettings(result.current);
+  assert.deepEqual(unchanged.current, result.current);
+});
+
+test('does not interpret Flow\'s media menu as generation settings', async () => {
+  const oldButton = current.window.document.getElementById('settings-btn');
+  const chip = oldButton.cloneNode(false);
+  chip.id = 'settings-btn';
+  chip.removeAttribute('aria-haspopup');
+  chip.setAttribute('aria-label', 'Settings trigger');
+  chip.innerHTML = '<span>🍌 Nano Banana 2.1</span><mat-icon>crop_16_9</mat-icon><span>x1</span>';
+  oldButton.replaceWith(chip);
+
+  chip.addEventListener('click', () => {
+    current.window.document.getElementById('overlay-root').innerHTML = `
+      <div role="menu" aria-label="Media"><button>All media</button><button>Images</button>
+      <button>Characters</button><button>Scenes</button><button>Uploads</button><button>Tools</button></div>`;
+  });
+
+  const result = await current.adapter.readSettings();
+  assert.equal(result.current.model, 'Nano Banana 2.1');
+  assert.equal(result.current.aspectRatio, '16:9');
+  assert.ok(!result.options.model.includes('All media'));
+});
+
+test('a changed value reports that the chip-only composer must be changed in Flow', async () => {
+  const oldButton = current.window.document.getElementById('settings-btn');
+  const chip = oldButton.cloneNode(false);
+  chip.id = 'settings-btn';
+  chip.removeAttribute('aria-haspopup');
+  chip.setAttribute('aria-label', 'Settings trigger');
+  chip.innerHTML = '<span>🍌 Nano Banana 2.1</span><mat-icon>crop_16_9</mat-icon><span>x1</span>';
+  oldButton.replaceWith(chip);
+
+  await assert.rejects(current.adapter.applySettings({ aspectRatio: '9:16' }), (error) => {
+    assert.equal(error.code, 'FLOW_SETTING_FAILED');
+    assert.match(error.message, /does not expose a generation settings menu/i);
+    return true;
+  });
+});
+
 test('applySettings changes Flow\'s own settings, and the model list follows the mode', async () => {
   const result = await current.adapter.applySettings({ mode: 'Video' });
   assert.equal(result.current.mode, 'Video');

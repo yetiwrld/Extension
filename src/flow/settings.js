@@ -34,10 +34,33 @@ export async function readFlowSettings(ctx) {
       'Could not find the model/settings control next to the Flow prompt box.',
     );
   }
-  const popover = await openSettingsPopover(ctx, trigger.el);
+
+  // Flow's October 2026 composer no longer opens a generation-settings menu for
+  // every account. The chip itself is still authoritative and contains the model,
+  // aspect ratio and output count (for example "Nano Banana 2.1 · 16:9 · x1").
+  // Read it before attempting the menu so an inert chip remains usable.
+  const chip = readSettingsChip(trigger.el);
+  if (isChipOnlyTrigger(trigger.el) && hasChipSettings(chip)) {
+    return chipResult(chip, trigger.strategy);
+  }
+  let popover;
+  try {
+    popover = await openSettingsPopover(ctx, trigger.el);
+  } catch (error) {
+    if (hasChipSettings(chip)) return chipResult(chip, trigger.strategy);
+    throw error;
+  }
+
   try {
     const options = readPopoverOptions(popover);
-    return summarize(options, trigger, ctx.doc, prompt.el, trigger.strategy);
+    // Do not mistake Flow's media/Add menu (All media, Images, Characters,
+    // Scenes, Uploads, Tools) for generation settings. This was previously the
+    // cause of bogus models and a FLOW_UI_CHANGED failure.
+    if (!isGenerationSettingsMenu(popover, options)) {
+      if (hasChipSettings(chip)) return chipResult(chip, trigger.strategy);
+      throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow opened a menu, but it was not the generation settings menu.');
+    }
+    return mergeChipSettings(summarize(options, trigger, ctx.doc, prompt.el, trigger.strategy), chip);
   } finally {
     await closePopover(ctx, popover);
   }
@@ -57,10 +80,36 @@ export async function applyFlowSettings(ctx, target) {
     if (!trigger) {
       throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Could not find the model/settings control next to the Flow prompt box.');
     }
-    const popover = await openSettingsPopover(ctx, trigger.el);
+    const shown = readSettingsChip(trigger.el);
+    if (sameName(shown.current[key] ?? '', wanted)) continue;
+    if (isChipOnlyTrigger(trigger.el) && hasChipSettings(shown)) {
+      throw new AutomationError(
+        ERROR_CODES.FLOW_SETTING_FAILED,
+        `Flow currently shows "${shown.current[key] ?? 'unknown'}" for ${labelFor(key)}, but this composer does not expose a generation settings menu. Change it in Flow, then try again.`,
+      );
+    }
+
+    let popover;
+    try {
+      popover = await openSettingsPopover(ctx, trigger.el);
+    } catch (error) {
+      if (hasChipSettings(shown)) {
+        throw new AutomationError(
+          ERROR_CODES.FLOW_SETTING_FAILED,
+          `Flow currently shows "${shown.current[key] ?? 'unknown'}" for ${labelFor(key)}, but this composer does not expose a generation settings menu. Change it in Flow, then try again.`,
+        );
+      }
+      throw error;
+    }
     let applied = false;
     try {
       const options = readPopoverOptions(popover);
+      if (!isGenerationSettingsMenu(popover, options)) {
+        throw new AutomationError(
+          ERROR_CODES.FLOW_SETTING_FAILED,
+          'Flow opened its media menu instead of generation settings. Change the setting in Flow, then try again.',
+        );
+      }
       const match = options.find((option) => classifySettingOption(option) === key && sameName(option.name, wanted));
       if (!match) {
         const available = options
@@ -149,6 +198,72 @@ function summarize(options, trigger, doc, promptEl, strategy) {
     if (match) current.model = match;
   }
   return { current, options: list, strategy: `${strategy}; popover-options=${options.length}` };
+}
+
+/** Read values rendered directly in the compact composer chip. */
+function readSettingsChip(triggerEl) {
+  const pieces = [triggerEl.textContent ?? ''];
+  for (const el of triggerEl.querySelectorAll('[aria-label], mat-icon, [role="img"]')) {
+    pieces.push(el.getAttribute('aria-label') ?? '', el.textContent ?? '');
+  }
+  const raw = normalizeText(pieces.join(' '));
+  const ratioMatch = raw.match(/(?:crop[_\s-]*)?(\d{1,2})\s*[:_]\s*(\d{1,2})/i);
+  const aspectRatio = ratioMatch ? `${ratioMatch[1]}:${ratioMatch[2]}` : null;
+
+  // textContent normally has the cleanest model label. Remove the other chip
+  // fields and generic accessibility labels without maintaining a model list.
+  let model = normalizeText(triggerEl.textContent)
+    .replace(/(?:crop[_\s-]*)?\d{1,2}\s*[:_]\s*\d{1,2}/gi, ' ')
+    .replace(/\bx\s*\d+\b/gi, ' ')
+    .replace(/\b(settings?\s+trigger|aspect\s+ratio|outputs?)\b/gi, ' ')
+    .replace(/[·•|▾▼]/g, ' ')
+    .replace(/^\s*[^\p{L}\p{N}]+/u, ' ');
+  model = normalizeText(model) || null;
+  const mode = inferMode(model);
+  return { current: { mode, model, aspectRatio } };
+}
+
+function inferMode(model) {
+  if (!model) return null;
+  if (/\b(?:veo|video)\b/i.test(model)) return 'Video';
+  if (/\b(?:banana|imagen|image)\b/i.test(model)) return 'Image';
+  return null;
+}
+
+function isChipOnlyTrigger(triggerEl) {
+  return triggerEl.matches?.('.settings-trigger-button')
+    && !triggerEl.hasAttribute('aria-haspopup')
+    && !triggerEl.hasAttribute('aria-expanded');
+}
+
+function hasChipSettings(chip) {
+  return Boolean(chip?.current?.model || chip?.current?.aspectRatio);
+}
+
+function chipResult(chip, strategy) {
+  const options = { mode: [], model: [], aspectRatio: [] };
+  for (const key of SETTING_KEYS) {
+    if (chip.current[key]) options[key].push(chip.current[key]);
+  }
+  return { current: chip.current, options, strategy: `${strategy}; composer-chip` };
+}
+
+function mergeChipSettings(result, chip) {
+  for (const key of SETTING_KEYS) {
+    if (!result.current[key] && chip.current[key]) result.current[key] = chip.current[key];
+    if (chip.current[key] && !result.options[key].some((value) => sameName(value, chip.current[key]))) {
+      result.options[key].push(chip.current[key]);
+    }
+  }
+  return result;
+}
+
+function isGenerationSettingsMenu(popover, options) {
+  const groups = new Set(options.map(classifySettingOption).filter(Boolean));
+  const text = normalizeText(`${popover.getAttribute?.('aria-label') ?? ''} ${popover.textContent ?? ''}`);
+  const hasSettingsHeading = /\b(model|aspect\s*ratio|mode|output\s*count)\b/i.test(text);
+  const hasRatio = options.some((option) => classifySettingOption(option) === 'aspectRatio');
+  return hasRatio || (hasSettingsHeading && groups.size >= 2);
 }
 
 function requirePrompt(doc) {

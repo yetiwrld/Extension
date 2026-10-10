@@ -87,8 +87,13 @@ export function findSettingsTrigger(doc, promptEl) {
   const region = findPromptRegion(promptEl) ?? doc;
   const buttons = queryAllVisible(region, 'button, [role="button"], [role="combobox"]').filter((button) => {
     const name = accessibleName(button);
-    if (!name || GENERATE_NAME.test(name) || ADD_NAME.test(name) || REMOVE_NAME.test(name)) return false;
-    return button.hasAttribute('aria-haspopup') || button.hasAttribute('aria-expanded') || /arrow_drop_down|expand_more|unfold_more/i.test(name) || /\b(banana|veo|gemini|omni|imagen|image|video)\b/i.test(name);
+    const rendered = normalizeText(button.textContent);
+    if ((!name && !rendered) || GENERATE_NAME.test(name) || ADD_NAME.test(name) || REMOVE_NAME.test(name)) return false;
+    return button.matches('.settings-trigger-button, [data-testid*="settings" i]')
+      || button.hasAttribute('aria-haspopup')
+      || button.hasAttribute('aria-expanded')
+      || /arrow_drop_down|expand_more|unfold_more/i.test(`${name} ${rendered}`)
+      || /\b(banana|veo|gemini|omni|imagen|image|video)\b/i.test(`${name} ${rendered}`);
   });
   const withPopup = buttons.find((button) => button.hasAttribute('aria-haspopup')) ?? buttons[0];
   if (!withPopup) return null;
