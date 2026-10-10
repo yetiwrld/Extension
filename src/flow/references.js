@@ -69,25 +69,23 @@ export async function attachReferences(ctx, payloads) {
   if (!prompt) throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found.');
 
   const baseline = countAttachedReferences(ctx.doc, prompt.el);
-  const picker = await openProjectPicker(ctx, prompt.el);
-  const search = findPickerSearch(picker);
+  let attached = 0;
 
-  // Flow's supported picker is multi-select. Select every scene ingredient in
-  // this one picker session, then press Add to prompt once. Reopening Add after
-  // the first ingredient is unreliable because Flow changes the composer DOM.
+  // Flow's desktop picker is effectively single-select in the current UI:
+  // selecting a second tile can replace the first. Confirm each ingredient,
+  // then reopen the narrowly-labelled Add ingredients control for the next.
   for (const payload of payloads) {
-    // Do not rewrite the search box when the tile is already rendered. Flow
-    // rebuilds the result grid on every search and can discard selections made
-    // before that rebuild, leaving only the final scene reference attached.
+    const picker = await openProjectPicker(ctx, prompt.el);
     let items = readProjectMediaItems(picker);
     let match = matchProjectItem(payload.name, items);
-    let searched = false;
-    if (match.missing && search) {
-      setControlledValue(search, payload.name);
-      await ctx.sleep(ctx.timings.settleMs);
-      items = readProjectMediaItems(picker);
-      match = matchProjectItem(payload.name, items);
-      searched = true;
+    if (match.missing) {
+      const search = findPickerSearch(picker);
+      if (search) {
+        setControlledValue(search, payload.name);
+        await ctx.sleep(ctx.timings.settleMs);
+        items = readProjectMediaItems(picker);
+        match = matchProjectItem(payload.name, items);
+      }
     }
     if (match.error) {
       await closePicker(ctx, picker);
@@ -95,34 +93,27 @@ export async function attachReferences(ctx, payloads) {
     }
     clickElement(match.item.el);
     await ctx.sleep(ctx.timings.settleMs);
-    if (searched && search.isConnected) {
-      // Restore the unfiltered grid only after Flow has recorded this selection.
-      setControlledValue(search, '');
-      await ctx.sleep(ctx.timings.settleMs);
+
+    const confirm = findPickerConfirm(picker, ctx.doc);
+    if (!confirm) {
+      await closePicker(ctx, picker);
+      throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, `Flow did not show "Add to prompt" for "${payload.name}".`);
     }
-  }
+    clickElement(confirm);
+    await ctx.sleep(ctx.timings.settleMs);
 
-  const confirm = findPickerConfirm(picker, ctx.doc);
-  if (!confirm) {
-    await closePicker(ctx, picker);
-    throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, 'Flow did not show the "Add to prompt" button after selecting the project references.');
-  }
-  clickElement(confirm);
-  await ctx.sleep(ctx.timings.settleMs);
-
-  const confirmed = await waitForValue(
-    () => countAttachedReferences(ctx.doc, prompt.el) >= baseline + payloads.length || !picker.isConnected || !isVisible(picker),
-    { timeoutMs: ATTACH_TIMEOUT_MS, intervalMs: 250, sleep: ctx.sleep },
-  );
-  await closePicker(ctx, picker);
-  if (!confirmed) {
-    throw new AutomationError(
-      ERROR_CODES.REFERENCE_UPLOAD_FAILED,
-      `Flow did not accept ${payloads.length} selected project ${payloads.length === 1 ? 'reference' : 'references'} after clicking "Add to prompt".`,
+    const confirmed = await waitForValue(
+      () => countAttachedReferences(ctx.doc, prompt.el) >= baseline + attached + 1 || !picker.isConnected || !isVisible(picker),
+      { timeoutMs: ATTACH_TIMEOUT_MS, intervalMs: 250, sleep: ctx.sleep },
     );
+    await closePicker(ctx, picker);
+    if (!confirmed) {
+      throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, `Flow did not accept "${payload.name}" after clicking "Add to prompt".`);
+    }
+    attached += 1;
   }
 
-  return { attached: payloads.length, expected: payloads.length, strategy: 'use-from-project-multiselect' };
+  return { attached, expected: payloads.length, strategy: 'use-from-project-sequential' };
 }
 
 async function openProjectPicker(ctx, promptEl) {

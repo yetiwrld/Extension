@@ -661,8 +661,9 @@ export class AutomationRunner {
 
     await this.setScene(sceneId, S.SUBMITTING, { detail: 'Submitting to Flow.', baseline, resumeStep: S.SUBMITTING, error: null });
 
+    let submitResult;
     try {
-      await this.flow.submit();
+      submitResult = await this.flow.submit();
     } catch (error) {
       const decision = await this.failScene(
         sceneId,
@@ -674,12 +675,14 @@ export class AutomationRunner {
 
     let accepted;
     try {
-      accepted = await awaitSubmissionAccepted({
-        poll: () => this.readGenerationStatus(baseline),
-        clock: this.clock,
-        timeoutMs: this.timings.submitTimeoutMs,
-        pollMs: this.timings.pollMs,
-      });
+      accepted = submitResult?.accepted
+        ? { outcome: 'started', status: { detail: 'Flow changed state immediately after submission.' } }
+        : await awaitSubmissionAccepted({
+            poll: () => this.readGenerationStatus(baseline),
+            clock: this.clock,
+            timeoutMs: this.timings.submitTimeoutMs,
+            pollMs: this.timings.pollMs,
+          });
     } catch (error) {
       const reason = normalizeError(error).message;
       const decision = await this.failScene(

@@ -8,11 +8,12 @@ import { generationStatus as readGenerationStatus, snapshotOutputs as takeOutput
 import {
   findAgentToggle,
   findGenerateButton,
+  findProgressIndicators,
   findPromptBox,
   findSettingsTrigger,
   isGenerateEnabled,
 } from './selectors.js';
-import { accessibleName, clickElement, normalizeText } from './dom.js';
+import { accessibleName, clickElement, normalizeText, readEditableText } from './dom.js';
 
 /**
  * Flow adapter: the only place that turns automation intents into Flow DOM work.
@@ -22,7 +23,7 @@ import { accessibleName, clickElement, normalizeText } from './dom.js';
  * All failures are AutomationError with a stable code.
  */
 
-export const ADAPTER_VERSION = '1.4.2';
+export const ADAPTER_VERSION = '1.5.0';
 
 export const DEFAULT_TIMINGS = Object.freeze({
   settleMs: 350,
@@ -141,9 +142,23 @@ export function createFlowAdapter(options = {}) {
           `Flow's ${accessibleName(generate.el) || 'Generate'} button is disabled. Check that the prompt is not empty and the settings are valid.`,
         );
       }
+      const promptBefore = normalizeText(readEditableText(prompt.el));
       clickElement(generate.el);
-      await sleep(timings.settleMs);
-      return { clicked: true, strategy: generate.strategy };
+      await sleep(Math.max(timings.settleMs, 500));
+
+      let accepted = submissionChanged(doc, prompt.el, generate.el, promptBefore);
+      let fallback = null;
+      if (!accepted) {
+        // Current Flow automators use Enter on the ProseMirror editor as the
+        // fallback when the icon button's click route does not reach Angular.
+        // Only do this after the click showed no acceptance evidence, avoiding
+        // a second submission when the first route worked.
+        pressEnter(prompt.el);
+        fallback = 'prompt-enter';
+        await sleep(Math.max(timings.settleMs, 500));
+        accepted = submissionChanged(doc, prompt.el, generate.el, promptBefore);
+      }
+      return { clicked: true, accepted, strategy: generate.strategy, fallback };
     },
 
     /** Output and progress state since `baseline`. */
@@ -177,5 +192,23 @@ export async function handleFlowCommand(adapter, command, payload) {
 
 function check(label, ok, detail) {
   return { label, ok: Boolean(ok), detail: normalizeText(detail) };
+}
+
+function submissionChanged(doc, promptEl, originalButton, promptBefore) {
+  const current = findGenerateButton(doc, promptEl);
+  if (!originalButton.isConnected) return true;
+  if (current && !isGenerateEnabled(current.el)) return true;
+  if (findProgressIndicators(doc, promptEl).length > 0) return true;
+  const promptAfter = normalizeText(readEditableText(promptEl));
+  return Boolean(promptBefore) && promptAfter !== promptBefore;
+}
+
+function pressEnter(target) {
+  target.focus?.({ preventScroll: true });
+  const view = target.ownerDocument.defaultView;
+  const init = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+  target.dispatchEvent(new view.KeyboardEvent('keydown', init));
+  target.dispatchEvent(new view.KeyboardEvent('keypress', init));
+  target.dispatchEvent(new view.KeyboardEvent('keyup', init));
 }
 

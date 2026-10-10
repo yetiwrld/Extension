@@ -216,7 +216,7 @@ test('attachReferences uses Add > Use from project and confirms each chip', asyn
   ];
   const result = await current.adapter.attachReferences(payloads);
   assert.equal(result.attached, 2);
-  assert.equal(result.strategy, 'use-from-project-multiselect');
+  assert.equal(result.strategy, 'use-from-project-sequential');
   assert.deepEqual(current.page.state.references, ['Aron.png', 'Laboratory.png']);
 });
 
@@ -279,6 +279,7 @@ test('submit clicks Generate once the prompt is in place', async () => {
   await current.adapter.insertPrompt('A prompt to send.');
   const result = await current.adapter.submit();
   assert.equal(result.clicked, true);
+  assert.equal(result.accepted, true);
   assert.deepEqual(current.page.state.submitted, ['A prompt to send.']);
 });
 

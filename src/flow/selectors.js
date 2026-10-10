@@ -214,12 +214,22 @@ export function findReferenceRemoveButtons(promptEl) {
 /** Entry point for attaching files: the "Add" / upload control near the prompt box. */
 export function findAddButton(promptEl) {
   const region = findPromptRegion(promptEl);
-  if (!region) return null;
-  const match = queryAllVisible(region, 'button, [role="button"]').find((button) => {
-    const name = accessibleName(button);
-    return ADD_NAME.test(name) || /\b(add|upload|attach)\b/i.test(name) || name === '+';
-  });
-  return match ? { el: match, strategy: 'add-in-prompt-region' } : null;
+  if (region) {
+    const match = queryAllVisible(region, 'button, [role="button"]').find((button) => {
+      const name = accessibleName(button);
+      return ADD_NAME.test(name) || /\b(add|upload|attach)\b/i.test(name) || name === '+';
+    });
+    if (match) return { el: match, strategy: 'add-in-prompt-region' };
+  }
+
+  // Once Flow attaches its first ingredient it can move the launcher outside
+  // the composer's previous DOM boundary. Its explicit accessible label remains
+  // stable, so use that narrow document-wide fallback rather than guessing.
+  const doc = promptEl?.ownerDocument;
+  const anywhere = doc
+    ? queryAllVisible(doc, 'button, [role="button"]').find((button) => /\badd ingredients? to (?:the )?prompt box\b/i.test(accessibleName(button)))
+    : null;
+  return anywhere ? { el: anywhere, strategy: 'add-ingredients-in-document' } : null;
 }
 
 export function findUploadMenuItem(doc) {
