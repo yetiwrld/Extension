@@ -13,7 +13,7 @@
 import { accessibleName, ancestors, isDisabled, isVisible, labelText, normalizeText, queryAllVisible } from './dom.js';
 
 const PROMPT_HINT = /(prompt|describe|imagine|what do you want|what would you like|create|generate|write)/i;
-const GENERATE_NAME = /^(?:[a-z_]+\s+)?(generate|create|make)\b/i;
+const GENERATE_NAME = /^(?:[a-z_]+\s+)?(?:generate|generation|create|make)\b/i;
 const ADD_NAME = /^(?:[a-z_]+\s+)?(add|attach|upload|\+)(?:\s|$)/i;
 const REMOVE_NAME = /(remove|delete|clear|close|dismiss)/i;
 const AGENT_NAME = /\bagent\b/i;

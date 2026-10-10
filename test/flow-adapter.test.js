@@ -82,6 +82,16 @@ test('probe finds Flow\'s icon-only generate component', async () => {
   assert.equal(probe.generateStrategy, 'generate-component-in-prompt-region');
 });
 
+test('prefers Flow\'s real Start generation button over its icon component', async () => {
+  const generate = current.window.document.getElementById('generate');
+  generate.setAttribute('aria-label', 'Start generation');
+  generate.innerHTML = '<flow-generate-icon-button>arrow_forward</flow-generate-icon-button>';
+
+  const probe = await current.adapter.probe();
+  assert.equal(probe.generateFound, true);
+  assert.equal(probe.generateStrategy, 'generate-in-prompt-region');
+});
+
 test('probe reports Agent as on when its switch is on', async () => {
   current.window.document.getElementById('agent').setAttribute('aria-checked', 'true');
   const probe = await current.adapter.probe();

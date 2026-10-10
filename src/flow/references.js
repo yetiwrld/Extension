@@ -76,16 +76,18 @@ export async function attachReferences(ctx, payloads) {
   // this one picker session, then press Add to prompt once. Reopening Add after
   // the first ingredient is unreliable because Flow changes the composer DOM.
   for (const payload of payloads) {
-    if (search) {
-      setControlledValue(search, payload.name);
-      await ctx.sleep(ctx.timings.settleMs);
-    }
+    // Do not rewrite the search box when the tile is already rendered. Flow
+    // rebuilds the result grid on every search and can discard selections made
+    // before that rebuild, leaving only the final scene reference attached.
     let items = readProjectMediaItems(picker);
     let match = matchProjectItem(payload.name, items);
+    let searched = false;
     if (match.missing && search) {
+      setControlledValue(search, payload.name);
       await ctx.sleep(ctx.timings.settleMs);
       items = readProjectMediaItems(picker);
       match = matchProjectItem(payload.name, items);
+      searched = true;
     }
     if (match.error) {
       await closePicker(ctx, picker);
@@ -93,6 +95,11 @@ export async function attachReferences(ctx, payloads) {
     }
     clickElement(match.item.el);
     await ctx.sleep(ctx.timings.settleMs);
+    if (searched && search.isConnected) {
+      // Restore the unfiltered grid only after Flow has recorded this selection.
+      setControlledValue(search, '');
+      await ctx.sleep(ctx.timings.settleMs);
+    }
   }
 
   const confirm = findPickerConfirm(picker, ctx.doc);
