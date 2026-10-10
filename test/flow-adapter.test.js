@@ -217,6 +217,18 @@ test('picker closure confirms attachment when Flow renders an opaque ingredient 
   assert.deepEqual(page.page.state.references, ['Aron.png', 'Vex.png']);
 });
 
+test('attached ingredient controls do not shrink the resolved prompt region and hide Add', async () => {
+  const prompt = current.page.promptEl;
+  const shell = current.window.document.createElement('div');
+  prompt.replaceWith(shell);
+  shell.append(prompt);
+  shell.append(current.window.document.createElement('button'), current.window.document.createElement('button'));
+
+  const result = await current.adapter.attachReferences([{ name: 'Aron.png' }, { name: 'Vex.png' }]);
+  assert.equal(result.attached, 2);
+  assert.deepEqual(current.page.state.references, ['Aron.png', 'Vex.png']);
+});
+
 test('an exact project filename wins even when normalized basenames are ambiguous', async () => {
   const result = await current.adapter.attachReferences([{ name: 'hero_sheet_v1.jpeg' }]);
   assert.equal(result.attached, 1);

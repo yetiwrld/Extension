@@ -62,11 +62,28 @@ export function findPromptBox(doc) {
 /** The region that holds the prompt box, its settings button, Generate, and references. */
 export function findPromptRegion(promptEl) {
   if (!promptEl) return null;
-  for (const node of ancestors(promptEl, 8)) {
-    const buttons = node.querySelectorAll('button, [role="button"]');
-    if (buttons.length >= 2) return node;
-  }
-  return promptEl.parentElement ?? null;
+
+  // Flow has a stable composer host. Prefer it over the old "nearest ancestor
+  // with two buttons" heuristic: after the first ingredient is attached, its
+  // inner wrapper can itself contain multiple controls and was incorrectly
+  // treated as the whole prompt region, hiding the real Add button.
+  const composer = promptEl.closest('flow-base-prompt-box, .base-prompt-box, .prompt-box');
+  if (composer) return composer;
+
+  const candidates = ancestors(promptEl, 10).map((node, depth) => {
+    const controls = Array.from(node.querySelectorAll('button, [role="button"], flow-generate-icon-button'));
+    const names = controls.map(accessibleName).join(' ');
+    let score = controls.length >= 2 ? 1 : 0;
+    if (/\b(add|attach|upload|ingredient)\b/i.test(names)) score += 4;
+    if (/\b(settings?|banana|veo|imagen|gemini)\b/i.test(names)) score += 3;
+    if (/\b(generate|start generation)\b|arrow_forward/i.test(names)) score += 3;
+    // When scores tie, prefer the broader ancestor rather than an attachment's
+    // newly-created inner control wrapper.
+    score += depth / 100;
+    return { node, score };
+  });
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0]?.score >= 1 ? candidates[0].node : promptEl.parentElement ?? null;
 }
 
 /** Generate / Create button. Must be visible; the caller decides what to do when it is disabled. */
