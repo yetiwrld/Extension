@@ -283,6 +283,27 @@ test('finds a virtualized project item by scrolling beyond the visible tiles', a
   assert.deepEqual(page.page.state.references, ['Vex.png']);
 });
 
+test('loads more virtualized items through the last visible tile when scroll metrics are hidden', async () => {
+  const page = createPage({ projectPickerMode: 'auto' });
+  page.window.document.addEventListener('click', (event) => {
+    if (event.target?.id !== 'project-item') return;
+    queueMicrotask(() => {
+      const picker = page.window.document.querySelector('[role="dialog"][aria-label="Project media"]');
+      const vex = picker?.querySelector('[data-project-name="Vex.png"]');
+      if (!picker || !vex) return;
+      vex.remove();
+      const last = Array.from(picker.querySelectorAll('[data-project-name]')).pop();
+      last.scrollIntoView = () => {
+        if (!vex.isConnected) picker.insertBefore(vex, picker.querySelector('#add-to-prompt'));
+      };
+    });
+  }, true);
+
+  const result = await page.adapter.attachReferences([{ name: 'Vex.png' }]);
+  assert.equal(result.attached, 1);
+  assert.deepEqual(page.page.state.references, ['Vex.png']);
+});
+
 test('an exact project filename wins even when normalized basenames are ambiguous', async () => {
   const result = await current.adapter.attachReferences([{ name: 'hero_sheet_v1.jpeg' }]);
   assert.equal(result.attached, 1);

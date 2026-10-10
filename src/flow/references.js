@@ -189,19 +189,39 @@ async function findProjectItem(ctx, picker, wanted) {
   if (found) return found;
 
   // Prefer Flow's own search when this picker variant exposes it.
-  const search = findPickerSearch(picker);
+  const search = findPickerSearch(picker, ctx.doc);
   if (search) {
     setControlledValue(search, wanted);
-    await ctx.sleep(ctx.timings.settleMs);
+    await ctx.sleep(Math.max(ctx.timings.settleMs, 800));
     found = inspect();
     if (found) return found;
     setControlledValue(search, '');
-    await ctx.sleep(ctx.timings.settleMs);
+    await ctx.sleep(Math.max(ctx.timings.settleMs, 500));
   }
 
   // Flow virtualizes the project grid: only on-screen tiles exist in the DOM.
-  // Walk every scrollable viewport and inspect each rendered page rather than
-  // concluding that an off-screen project asset is missing.
+  // First drive the last rendered tile into view. This lets the browser locate
+  // the real scrolling ancestor even when Flow's custom viewport reports no
+  // useful scrollHeight to page scripts.
+  let stagnantRounds = 0;
+  for (let round = 0; round < 80 && stagnantRounds < 6; round += 1) {
+    const items = readProjectMediaItems(picker);
+    remember(items);
+    const exact = items.filter((item) => sameName(item.name, wanted));
+    if (exact.length === 1) return { item: exact[0] };
+    if (exact.length > 1) return { error: ambiguousMessage(wanted, exact) };
+    const before = seen.size;
+    const last = items[items.length - 1]?.el;
+    if (!last) break;
+    last.scrollIntoView?.({ block: 'end', inline: 'nearest' });
+    dispatchScroll(last);
+    await ctx.sleep(Math.max(ctx.timings.settleMs, 400));
+    const nextItems = readProjectMediaItems(picker);
+    remember(nextItems);
+    stagnantRounds = seen.size === before ? stagnantRounds + 1 : 0;
+  }
+
+  // Also walk every viewport that exposes normal scroll metrics.
   const fallbackCandidates = [];
   for (const scroller of projectScrollers(picker)) {
     const original = scroller.scrollTop;
@@ -256,7 +276,14 @@ async function findProjectItem(ctx, picker, wanted) {
 }
 
 function projectScrollers(picker) {
-  return [picker, ...picker.querySelectorAll('*')]
+  const candidates = [picker, ...picker.querySelectorAll('*')];
+  let ancestor = picker.parentElement;
+  while (ancestor) {
+    candidates.push(ancestor);
+    ancestor = ancestor.parentElement;
+  }
+  if (picker.ownerDocument.scrollingElement) candidates.push(picker.ownerDocument.scrollingElement);
+  return Array.from(new Set(candidates))
     .filter((el) => Number(el.scrollHeight) > Number(el.clientHeight) + 8)
     .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
 }
@@ -289,10 +316,27 @@ function ambiguousMessage(wanted, matches) {
   return `Project media "${wanted}" is ambiguous. Matches: ${matches.map((item) => item.name).join(', ')}.`;
 }
 
-function findPickerSearch(picker) {
-  return queryAllVisible(picker, 'input[type="search"], input[type="text"], input:not([type])').find((el) =>
-    /\b(search|find|filter)\b/i.test(`${accessibleName(el)} ${el.getAttribute('placeholder') ?? ''}`),
-  ) ?? null;
+function findPickerSearch(picker, doc = picker.ownerDocument) {
+  const selector = 'input[type="search"], input[type="text"], input:not([type])';
+  const isSearch = (el) => /\b(search|find|filter)\b/i.test(`${accessibleName(el)} ${el.getAttribute('placeholder') ?? ''}`);
+  const local = queryAllVisible(picker, selector).find(isSearch);
+  if (local) return local;
+
+  // In Flow's side-drawer variant the project search bar is a sibling of the
+  // virtualized grid, not a descendant of the element identified as picker.
+  // Prefer the visible search field geometrically closest to that grid.
+  const rect = picker.getBoundingClientRect();
+  const global = queryAllVisible(doc, selector).filter(isSearch);
+  global.sort((a, b) => distanceToRect(a.getBoundingClientRect(), rect) - distanceToRect(b.getBoundingClientRect(), rect));
+  return global[0] ?? null;
+}
+
+function distanceToRect(a, b) {
+  const ax = a.left + a.width / 2;
+  const ay = a.top + a.height / 2;
+  const bx = b.left + b.width / 2;
+  const by = b.top + b.height / 2;
+  return Math.hypot(ax - bx, ay - by);
 }
 
 function findPickerConfirm(picker, doc) {
