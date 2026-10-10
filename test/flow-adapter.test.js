@@ -33,7 +33,7 @@ before(() => {
   globalThis.DataTransfer = FakeDataTransfer;
 });
 
-function createPage({ variant = 'textarea', url = 'https://flow.google.com/project/abc123', flowWithMissingUpload = false } = {}) {
+function createPage({ variant = 'textarea', url = 'https://flow.google.com/project/abc123', flowWithMissingUpload = false, opaqueReferenceChips = false } = {}) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { url, pretendToBeVisual: true });
   const { window } = dom;
   // jsdom has no layout: give every element a size so visibility and thumbnail heuristics apply.
@@ -43,7 +43,7 @@ function createPage({ variant = 'textarea', url = 'https://flow.google.com/proje
   window.Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
     return { width: 200, height: 200, top: 0, left: 0, right: 200, bottom: 200, x: 0, y: 0 };
   };
-  const page = installFlowFixture(window, { variant, flowWithMissingUpload });
+  const page = installFlowFixture(window, { variant, flowWithMissingUpload, opaqueReferenceChips });
   const adapter = createFlowAdapter({
     doc: window.document,
     location: new URL(url),
@@ -208,6 +208,13 @@ test('attachReferences uses Add > Use from project and confirms each chip', asyn
   assert.equal(result.attached, 2);
   assert.equal(result.strategy, 'use-from-project');
   assert.deepEqual(current.page.state.references, ['Aron.png', 'Laboratory.png']);
+});
+
+test('picker closure confirms attachment when Flow renders an opaque ingredient chip', async () => {
+  const page = createPage({ opaqueReferenceChips: true });
+  const result = await page.adapter.attachReferences([{ name: 'Aron.png' }, { name: 'Vex.png' }]);
+  assert.equal(result.attached, 2);
+  assert.deepEqual(page.page.state.references, ['Aron.png', 'Vex.png']);
 });
 
 test('an exact project filename wins even when normalized basenames are ambiguous', async () => {

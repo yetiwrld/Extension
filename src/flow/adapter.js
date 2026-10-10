@@ -22,7 +22,7 @@ import { accessibleName, clickElement, normalizeText } from './dom.js';
  * All failures are AutomationError with a stable code.
  */
 
-export const ADAPTER_VERSION = '1.3.3';
+export const ADAPTER_VERSION = '1.3.4';
 
 export const DEFAULT_TIMINGS = Object.freeze({
   settleMs: 350,

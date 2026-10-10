@@ -24,7 +24,7 @@ export const FIXTURE_CATALOG = Object.freeze({
 /** 1x1 transparent GIF, so the synthetic thumbnails load without network access. */
 const PLACEHOLDER_IMAGE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
-export function installFlowFixture(window, { variant = 'textarea', flowWithMissingUpload = false } = {}) {
+export function installFlowFixture(window, { variant = 'textarea', flowWithMissingUpload = false, opaqueReferenceChips = false } = {}) {
   const doc = window.document;
   const state = {
     mode: 'Image',
@@ -190,12 +190,14 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
   function addChip(name) {
     state.references.push(name);
     const chip = doc.createElement('span');
-    chip.className = 'chip';
-    chip.innerHTML = `<img alt="${name}" src="${PLACEHOLDER_IMAGE}"><button type="button" aria-label="Remove ${name}">\u00d7</button>`;
-    chip.querySelector('button').addEventListener('click', () => {
-      state.references = state.references.filter((item) => item !== name);
-      chip.remove();
-    });
+    chip.className = opaqueReferenceChips ? 'opaque-token' : 'chip';
+    if (!opaqueReferenceChips) {
+      chip.innerHTML = `<img alt="${name}" src="${PLACEHOLDER_IMAGE}"><button type="button" aria-label="Remove ${name}">\u00d7</button>`;
+      chip.querySelector('button').addEventListener('click', () => {
+        state.references = state.references.filter((item) => item !== name);
+        chip.remove();
+      });
+    }
     refsEl.appendChild(chip);
   }
 

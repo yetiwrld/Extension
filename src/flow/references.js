@@ -1,5 +1,5 @@
 import { AutomationError, ERROR_CODES } from '../utils/errors.js';
-import { accessibleName, clickElement, pressEscape, queryAllVisible, setControlledValue, waitForValue } from './dom.js';
+import { accessibleName, clickElement, isVisible, pressEscape, queryAllVisible, setControlledValue, waitForValue } from './dom.js';
 import {
   findAddButton,
   findOpenPopover,
@@ -30,9 +30,13 @@ export function countAttachedReferences(doc, promptEl) {
   const thumbnails = queryAllVisible(region, 'img').filter((img) => {
     if (img.closest('[role="dialog"], [role="menu"], [role="listbox"]')) return false;
     const rect = img.getBoundingClientRect();
-    return rect.width >= 24 && rect.width <= 160 && rect.height >= 24 && rect.height <= 160;
+    return rect.width >= 24 && rect.height >= 24;
   });
-  return Math.max(removeCount, thumbnails.length);
+  const ingredientHosts = queryAllVisible(
+    region,
+    '[class*="ingredient" i], [class*="reference-chip" i], [data-testid*="ingredient" i], [data-testid*="reference" i], flow-ingredient, flow-reference',
+  ).filter((el) => !el.querySelector('[class*="ingredient" i], [class*="reference-chip" i], flow-ingredient, flow-reference'));
+  return Math.max(removeCount, thumbnails.length, ingredientHosts.length);
 }
 
 /** @returns {Promise<{removed: number, remaining: number}>} */
@@ -93,7 +97,7 @@ export async function attachReferences(ctx, payloads) {
 
     // Some picker variants attach immediately. Others select a tile and wait
     // for an Add/Attach/Done confirmation button.
-    let confirmed = referenceWasAttached(ctx.doc, prompt.el, payload.name, baseline + attached + 1);
+    let confirmed = referenceWasAttached(ctx.doc, prompt.el, payload.name, baseline + attached + 1, picker);
     if (!confirmed) {
       const confirm = findPickerConfirm(picker, ctx.doc);
       if (confirm) {
@@ -101,7 +105,7 @@ export async function attachReferences(ctx, payloads) {
         await ctx.sleep(ctx.timings.settleMs);
       }
       confirmed = await waitForValue(
-        () => referenceWasAttached(ctx.doc, prompt.el, payload.name, baseline + attached + 1),
+        () => referenceWasAttached(ctx.doc, prompt.el, payload.name, baseline + attached + 1, picker),
         { timeoutMs: ATTACH_TIMEOUT_MS, intervalMs: 250, sleep: ctx.sleep },
       );
     }
@@ -217,8 +221,13 @@ function findPickerConfirm(picker, doc) {
   ) ?? null;
 }
 
-function referenceWasAttached(doc, promptEl, wanted, expectedCount) {
+function referenceWasAttached(doc, promptEl, wanted, expectedCount, picker) {
   if (countAttachedReferences(doc, promptEl) >= expectedCount) return true;
+  // Flow's current ingredient chip does not expose a filename, thumbnail or
+  // Remove label that our counter can read. Closing the project picker after
+  // the explicit "Add to prompt" press is still direct UI evidence that Flow
+  // accepted the selected item. A disabled/no-op press leaves it open.
+  if (!picker?.isConnected || !isVisible(picker)) return true;
   const region = findPromptRegion(promptEl);
   if (!region) return false;
   const wantedName = comparableFilename(wanted);
