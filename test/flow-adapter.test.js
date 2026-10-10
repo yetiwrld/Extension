@@ -300,6 +300,18 @@ test('generation status follows progress, then completion, using only NEW output
   assert.equal(done.inProgress, false);
 });
 
+test('Generate becoming disabled is accepted as submission evidence before progress appears', async () => {
+  await current.adapter.insertPrompt('Scene accepted by Flow.');
+  const baseline = await current.adapter.snapshotOutputs();
+  assert.equal(baseline.generateEnabled, true);
+
+  current.page.generateBtn.disabled = true;
+  const status = await current.adapter.generationStatus(baseline);
+  assert.equal(status.started, true);
+  assert.equal(status.state, 'pending');
+  assert.match(status.detail, /accepted Generate/);
+});
+
 test('an output that existed before submission does not count as completion', async () => {
   current.page.finishGeneration();
   const baseline = await current.adapter.snapshotOutputs();

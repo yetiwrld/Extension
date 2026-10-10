@@ -316,7 +316,15 @@ function outputKey(el, index) {
 /** Elements that show a generation in progress (spinners, progress bars, busy tiles). */
 export function findProgressIndicators(doc, promptEl) {
   const region = findPromptRegion(promptEl);
-  return queryAllVisible(doc, '[role="progressbar"], [aria-busy="true"]').filter((el) => !(region && region.contains(el)));
+  const standard = queryAllVisible(doc, '[role="progressbar"], [aria-busy="true"]').filter((el) => !(region && region.contains(el)));
+  // Flow uses Angular Material spinners and Cancel/Stop controls without always
+  // assigning progressbar/aria-busy roles. These selectors match its current
+  // generation UI and are also used by other maintained Flow automators.
+  const flowSpecific = queryAllVisible(
+    doc,
+    'mat-progress-bar, mat-spinner, .mat-mdc-progress-spinner, .loading-indicator, button[aria-label*="cancel" i], button[aria-label*="stop" i]',
+  );
+  return Array.from(new Set([...standard, ...flowSpecific]));
 }
 
 /** Visible alert or error messages on the page. */
