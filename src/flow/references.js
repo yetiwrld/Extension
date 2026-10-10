@@ -93,15 +93,15 @@ export async function attachReferences(ctx, payloads) {
 
     // Some picker variants attach immediately. Others select a tile and wait
     // for an Add/Attach/Done confirmation button.
-    let confirmed = countAttachedReferences(ctx.doc, prompt.el) >= baseline + attached + 1;
+    let confirmed = referenceWasAttached(ctx.doc, prompt.el, payload.name, baseline + attached + 1);
     if (!confirmed) {
-      const confirm = findPickerConfirm(picker);
+      const confirm = findPickerConfirm(picker, ctx.doc);
       if (confirm) {
         clickElement(confirm);
         await ctx.sleep(ctx.timings.settleMs);
       }
       confirmed = await waitForValue(
-        () => countAttachedReferences(ctx.doc, prompt.el) >= baseline + attached + 1,
+        () => referenceWasAttached(ctx.doc, prompt.el, payload.name, baseline + attached + 1),
         { timeoutMs: ATTACH_TIMEOUT_MS, intervalMs: 250, sleep: ctx.sleep },
       );
     }
@@ -201,10 +201,33 @@ function findPickerSearch(picker) {
   ) ?? null;
 }
 
-function findPickerConfirm(picker) {
+function findPickerConfirm(picker, doc) {
+  // Flow currently labels this action "Add to prompt" and may render it in a
+  // dialog footer outside the inner media grid.
+  const addToPrompt = queryAllVisible(doc, 'button, [role="button"]').find((el) =>
+    /\badd\b.*\b(?:to\s+)?prompt\b/i.test(accessibleName(el)),
+  );
+  if (addToPrompt) return addToPrompt;
   return queryAllVisible(picker, 'button, [role="button"]').find((el) =>
-    /^(?:add|attach|insert|use|select|done)(?:\s+\d+)?$/i.test(accessibleName(el)),
+    /^(?:add|attach|insert|use|select|done)(?:\s+(?:\d+|selected|item(?:s)?))?$/i.test(accessibleName(el)),
   ) ?? null;
+}
+
+function referenceWasAttached(doc, promptEl, wanted, expectedCount) {
+  if (countAttachedReferences(doc, promptEl) >= expectedCount) return true;
+  const region = findPromptRegion(promptEl);
+  if (!region) return false;
+  const wantedName = comparableFilename(wanted);
+  return Array.from(region.querySelectorAll('[aria-label], [title], img[alt], [class*="ingredient" i], [class*="reference" i]')).some((el) => {
+    // Ignore controls that launch the ingredient picker rather than attached chips.
+    if (el === promptEl || /\badd ingredients?\b/i.test(accessibleName(el))) return false;
+    const shown = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || el.textContent || '';
+    return comparableFilename(shown) === wantedName || comparableFilename(shown.replace(/(?:image|video)$/i, '')) === wantedName;
+  });
+}
+
+function comparableFilename(value) {
+  return String(value).trim().replace(/^.*[\\/]/, '').replace(/\s+(?:image|video)$/i, '').toLocaleLowerCase();
 }
 
 async function closePicker(ctx, picker) {

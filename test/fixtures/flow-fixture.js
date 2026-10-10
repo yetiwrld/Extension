@@ -139,15 +139,22 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
         <div role="dialog" aria-label="Project media">
           <h3>Use from project</h3>
           ${['Aron.png', 'Laboratory.png', 'Vex.png', 'Dropped.png', 'hero_sheet_v1.jpeg', 'hero_sheet_v2.jpeg']
-            .map((name) => `<button type="button" role="option" data-project-name="${name}" aria-label="${name}Image"><img alt="${name}" src="${PLACEHOLDER_IMAGE}">${name}Image</button>`)
+            .map((name) => `<button type="button" role="option" data-project-name="${name}" aria-label="${name}Image" aria-selected="false"><img alt="${name}" src="${PLACEHOLDER_IMAGE}">${name}Image</button>`)
             .join('')}
+          <button type="button" id="add-to-prompt">Add to prompt</button>
         </div>`;
+      let selectedProjectName = null;
       for (const item of overlay.querySelectorAll('[data-project-name]')) {
         item.addEventListener('click', () => {
-          addChip(item.dataset.projectName);
-          closePopover();
+          overlay.querySelectorAll('[data-project-name]').forEach((other) => other.setAttribute('aria-selected', 'false'));
+          item.setAttribute('aria-selected', 'true');
+          selectedProjectName = item.dataset.projectName;
         });
       }
+      overlay.querySelector('#add-to-prompt').addEventListener('click', () => {
+        if (selectedProjectName) addChip(selectedProjectName);
+        closePopover();
+      });
     });
     overlay.querySelector('#upload-item').addEventListener('click', () => {
       if (flowWithMissingUpload) {
