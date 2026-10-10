@@ -135,6 +135,10 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
       </div>`;
     addBtn.setAttribute('aria-expanded', 'true');
     overlay.querySelector('#upload-item').addEventListener('click', () => {
+      if (flowWithMissingUpload) {
+        closePopover();
+        return;
+      }
       if (!doc.querySelector('input[type="file"]')) {
         const input = doc.createElement('input');
         input.type = 'file';
@@ -217,9 +221,14 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
     resultsEl.appendChild(alert);
   }
 
+  if (flowWithMissingUpload) {
+    promptEl.addEventListener('drop', (event) => {
+      for (const file of Array.from(event.dataTransfer?.files ?? [])) addChip(file.name);
+    });
+  }
+
   renderSettingsButton();
   syncGenerate();
-  void flowWithMissingUpload;
 
   return {
     state,

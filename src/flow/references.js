@@ -82,10 +82,13 @@ export async function attachReferences(ctx, payloads) {
     if (item) {
       clickElement(item.el);
     }
-    input = await waitForValue(() => findFileInput(ctx.doc), { timeoutMs: ctx.timings.popoverMs * 10, intervalMs: 100, sleep: ctx.sleep });
+    input = await waitForValue(() => findFileInput(ctx.doc), { timeoutMs: ctx.timings.popoverMs, intervalMs: 100, sleep: ctx.sleep });
     if (findOpenPopover(ctx.doc)) pressEscape(ctx.doc);
     if (!input) {
-      throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, 'Flow did not open a file picker after choosing Upload.');
+      // The current Flow composer opens the browser's native picker without
+      // leaving an <input type=file> in the DOM. Extensions cannot operate that
+      // OS dialog, but Flow's composer also accepts the same files by drop.
+      return attachReferencesByDrop(ctx, prompt.el, payloads);
     }
   }
 
@@ -114,5 +117,70 @@ export async function attachReferences(ctx, payloads) {
     attached += batch.length;
   }
   return { attached, expected: payloads.length };
+}
+
+async function attachReferencesByDrop(ctx, promptEl, payloads) {
+  const baseline = countAttachedReferences(ctx.doc, promptEl);
+  const transfer = makeTransfer(ctx.doc, payloads);
+  const region = findPromptRegion(promptEl);
+  const candidates = uniqueElements([
+    promptEl,
+    promptEl.closest?.('.base-prompt-box, flow-base-prompt-box'),
+    region,
+    ctx.doc.body,
+  ]);
+
+  for (const target of candidates) {
+    dispatchFileDrop(target, transfer);
+    const confirmed = await waitForValue(() => countAttachedReferences(ctx.doc, promptEl) >= baseline + payloads.length, {
+      timeoutMs: ATTACH_TIMEOUT_MS,
+      intervalMs: 250,
+      sleep: ctx.sleep,
+    });
+    if (confirmed) return { attached: payloads.length, expected: payloads.length, strategy: 'drag-and-drop' };
+
+    // If Flow accepted only part of a multi-file drop, do not risk duplicating
+    // it on another target. Report the observed count to the runner instead.
+    const observed = Math.max(0, countAttachedReferences(ctx.doc, promptEl) - baseline);
+    if (observed > 0) return { attached: observed, expected: payloads.length, strategy: 'drag-and-drop' };
+  }
+
+  throw new AutomationError(
+    ERROR_CODES.REFERENCE_UPLOAD_FAILED,
+    'Flow did not accept the reference files through its Upload control or by dropping them on the prompt box.',
+  );
+}
+
+function makeTransfer(doc, payloads) {
+  const view = doc.defaultView;
+  const Transfer = view?.DataTransfer ?? globalThis.DataTransfer;
+  const FileCtor = view?.File ?? globalThis.File;
+  const transfer = new Transfer();
+  for (const payload of payloads) {
+    transfer.items.add(new FileCtor(
+      [base64ToBytes(payload.base64)],
+      payload.name,
+      { type: payload.mime || 'image/png', lastModified: Date.now() },
+    ));
+  }
+  return transfer;
+}
+
+function dispatchFileDrop(target, transfer) {
+  const view = target.ownerDocument.defaultView;
+  for (const type of ['dragenter', 'dragover', 'drop']) {
+    let event;
+    try {
+      event = new view.DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer: transfer });
+    } catch {
+      event = new view.Event(type, { bubbles: true, cancelable: true, composed: true });
+      Object.defineProperty(event, 'dataTransfer', { value: transfer });
+    }
+    target.dispatchEvent(event);
+  }
+}
+
+function uniqueElements(elements) {
+  return elements.filter((element, index) => element && elements.indexOf(element) === index);
 }
 

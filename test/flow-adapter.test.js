@@ -33,7 +33,7 @@ before(() => {
   globalThis.DataTransfer = FakeDataTransfer;
 });
 
-function createPage({ variant = 'textarea', url = 'https://flow.google.com/project/abc123' } = {}) {
+function createPage({ variant = 'textarea', url = 'https://flow.google.com/project/abc123', flowWithMissingUpload = false } = {}) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { url, pretendToBeVisual: true });
   const { window } = dom;
   // jsdom has no layout: give every element a size so visibility and thumbnail heuristics apply.
@@ -43,7 +43,7 @@ function createPage({ variant = 'textarea', url = 'https://flow.google.com/proje
   window.Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
     return { width: 200, height: 200, top: 0, left: 0, right: 200, bottom: 200, x: 0, y: 0 };
   };
-  const page = installFlowFixture(window, { variant });
+  const page = installFlowFixture(window, { variant, flowWithMissingUpload });
   const adapter = createFlowAdapter({
     doc: window.document,
     location: new URL(url),
@@ -67,6 +67,19 @@ test('probe reports the prompt box, Generate, settings and Agent state on a proj
   assert.equal(probe.settingsFound, true);
   assert.equal(probe.agentOn, false);
   assert.equal(probe.isProjectPage, true);
+});
+
+test('probe finds Flow\'s icon-only generate component', async () => {
+  const oldGenerate = current.window.document.getElementById('generate');
+  const host = current.window.document.createElement('flow-generate-icon-button');
+  host.textContent = 'arrow_forward';
+  host.setAttribute('aria-disabled', 'true');
+  oldGenerate.replaceWith(host);
+
+  const probe = await current.adapter.probe();
+  assert.equal(probe.generateFound, true);
+  assert.equal(probe.generateEnabled, false);
+  assert.equal(probe.generateStrategy, 'generate-component-in-prompt-region');
 });
 
 test('probe reports Agent as on when its switch is on', async () => {
@@ -194,6 +207,16 @@ test('attachReferences uses the Add > Upload path and confirms each file Flow sh
   const result = await current.adapter.attachReferences(payloads);
   assert.equal(result.attached, 2);
   assert.deepEqual(current.page.state.references, ['Aron.png', 'Laboratory.png']);
+});
+
+test('attachReferences falls back to dropping files when Upload mounts no file input', async () => {
+  const page = createPage({ flowWithMissingUpload: true });
+  const result = await page.adapter.attachReferences([
+    { name: 'Dropped.png', mime: 'image/png', base64: Buffer.from('drop').toString('base64') },
+  ]);
+  assert.equal(result.attached, 1);
+  assert.equal(result.strategy, 'drag-and-drop');
+  assert.deepEqual(page.page.state.references, ['Dropped.png']);
 });
 
 test('clearReferences removes every reference chip and reports none remaining', async () => {

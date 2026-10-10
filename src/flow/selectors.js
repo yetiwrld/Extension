@@ -75,9 +75,18 @@ export function findGenerateButton(doc, promptEl) {
   if (region) {
     const nearby = queryAllVisible(region, 'button, [role="button"]').filter((button) => GENERATE_NAME.test(accessibleName(button)));
     if (nearby.length) return { el: nearby[nearby.length - 1], strategy: 'generate-in-prompt-region' };
+
+    // Current Flow renders an icon-only Angular host. Its accessible text can be
+    // just "arrow_forward", so the old Generate-name check cannot see it.
+    const iconHosts = queryAllVisible(region, 'flow-generate-icon-button, .generate-button, [class*="generate-button"]');
+    if (iconHosts.length) {
+      const host = iconHosts[iconHosts.length - 1];
+      const nested = queryAllVisible(host, 'button, [role="button"]').pop();
+      return { el: nested ?? host, strategy: 'generate-component-in-prompt-region' };
+    }
   }
   // Document-wide fallback only accepts an explicit "Generate" label, never "Create project" style controls.
-  const anywhere = queryAllVisible(doc, 'button, [role="button"]').filter((button) => /\bgenerate\b/i.test(accessibleName(button)));
+  const anywhere = queryAllVisible(doc, 'button, [role="button"]').filter((button) => /\b(generate|start generation)\b/i.test(accessibleName(button)));
   if (anywhere.length) return { el: anywhere[anywhere.length - 1], strategy: 'generate-in-document' };
   return null;
 }
