@@ -391,6 +391,17 @@ test('uses the new output three-dot menu, hovers Download, and never clicks 1K',
   assert.deepEqual(current.page.state.downloads, [2]);
 });
 
+test('finds Flow download rows even when the open menu uses plain divs without ARIA roles', async () => {
+  await current.adapter.insertPrompt('Plain menu output.');
+  const baseline = await current.adapter.snapshotOutputs();
+  await current.adapter.submit();
+  current.page.finishGeneration({ downloadVariant: 'plain-menu' });
+  const done = await current.adapter.generationStatus(baseline);
+
+  await current.adapter.downloadLatest2k({ outputKeys: done.outputKeys });
+  assert.deepEqual(current.page.state.downloads, [1]);
+});
+
 test('Generate becoming disabled is accepted as submission evidence before progress appears', async () => {
   await current.adapter.insertPrompt('Scene accepted by Flow.');
   const baseline = await current.adapter.snapshotOutputs();

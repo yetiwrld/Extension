@@ -259,12 +259,14 @@ export function installFlowFixture(window, {
     };
     const control = doc.createElement('button');
     control.type = 'button';
-    if (downloadVariant === 'menu') {
+    if (downloadVariant === 'menu' || downloadVariant === 'plain-menu') {
       control.setAttribute('aria-label', 'More actions');
       control.textContent = '⋮';
       control.addEventListener('click', () => {
-        overlay.innerHTML = '<div role="menu"><button type="button" role="menuitem">Download</button></div>';
-        const row = overlay.querySelector('[role="menuitem"]');
+        overlay.innerHTML = downloadVariant === 'plain-menu'
+          ? '<div class="floating-menu"><div class="download-row">Download image</div></div>'
+          : '<div role="menu"><button type="button" role="menuitem">Download</button></div>';
+        const row = overlay.querySelector(downloadVariant === 'plain-menu' ? '.download-row' : '[role="menuitem"]');
         row.addEventListener('click', () => state.downloads.push(`1K-${outputNumber}`));
         row.addEventListener('mouseover', showQuality);
       });

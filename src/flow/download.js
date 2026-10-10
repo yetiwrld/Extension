@@ -41,17 +41,24 @@ export async function downloadLatest2k(ctx, evidence = {}) {
     if (menuButton) {
       clickElement(menuButton);
       await ctx.sleep(ctx.timings.settleMs);
-      downloadControl = await waitForValue(() => findDownloadMenuItem(ctx.doc), {
-        timeoutMs: ctx.timings.popoverMs * 2,
-        intervalMs: 150,
-        sleep: ctx.sleep,
-      });
-      if (!downloadControl) {
-        throw new AutomationError(ERROR_CODES.DOWNLOAD_FAILED, 'Flow opened the image menu but did not show Download.');
+      // Some Flow builds put 2K directly in this menu. Others first show a
+      // Download row whose submenu opens on hover.
+      const immediateUpscale = find2kUpscaled(ctx.doc);
+      if (immediateUpscale) {
+        downloadControl = immediateUpscale;
+      } else {
+        downloadControl = await waitForValue(() => findDownloadMenuItem(ctx.doc), {
+          timeoutMs: ctx.timings.popoverMs * 2,
+          intervalMs: 150,
+          sleep: ctx.sleep,
+        });
+        if (!downloadControl) {
+          throw new AutomationError(ERROR_CODES.DOWNLOAD_FAILED, 'Flow opened the image menu but did not show Download.');
+        }
+        // Do not click the parent Download row: that can immediately download 1K.
+        // Hovering opens its quality submenu.
+        hover(downloadControl);
       }
-      // Do not click the parent Download row: that can immediately download 1K.
-      // Hovering opens its quality submenu.
-      hover(downloadControl);
     } else {
       if (!evidence.trustedHover) {
         return { requested: false, retry: 'trusted-hover', hoverTarget: centerOf(output.el), outputKey: output.key };
@@ -123,17 +130,50 @@ function findCardMenuButton(card) {
 }
 
 function findDownloadMenuItem(doc) {
-  return queryAllVisible(doc, '[role="menuitem"], flow-menu-item').find((el) => {
+  const candidates = queryAllVisible(
+    doc,
+    'flow-menu-item, [role="menuitem"], [role="option"], [role="button"], button, a, li, div, span',
+  ).filter((el) => {
     const name = normalizeText(accessibleName(el));
-    return /^download$/i.test(name) && !/2k|upscal/i.test(name);
-  }) ?? null;
+    if (!name || name.length > 60) return false;
+    if (/\b2\s*k\b|upscal/i.test(name)) return false;
+    // A card's direct control is not the hover-only menu row and clicking it may
+    // start the original-quality download. It is handled separately above.
+    if (/^download media$/i.test(name)) return false;
+    return /^download(?:\b|\s)/i.test(name) || /\bdownload\b/i.test(name);
+  });
+  return candidates.sort((a, b) => downloadItemScore(b) - downloadItemScore(a))[0] ?? null;
+}
+
+function downloadItemScore(el) {
+  const name = normalizeText(accessibleName(el));
+  let score = /^download$/i.test(name) ? 100 : /^download\b/i.test(name) ? 70 : 30;
+  if (el.matches('flow-menu-item, [role="menuitem"], [role="option"]')) score += 25;
+  if (el.matches('button, a, [role="button"]')) score += 10;
+  if (el.closest('[role="menu"], [role="listbox"], flow-menu')) score += 15;
+  // Prefer the innermost row over a large wrapper containing the whole menu.
+  score -= el.querySelectorAll('flow-menu-item, [role="menuitem"], button, a, li, div, span').length * 5;
+  score -= Math.min(name.length, 60) / 10;
+  return score;
 }
 
 function find2kUpscaled(doc) {
-  return queryAllVisible(doc, 'flow-menu-item button, [role="menuitem"], [role="option"], button, [role="button"], li').find((el) => {
+  const candidates = queryAllVisible(
+    doc,
+    'flow-menu-item, flow-menu-item button, [role="menuitem"], [role="option"], button, [role="button"], a, li, div, span',
+  ).filter((el) => {
     const name = normalizeText(accessibleName(el));
-    return /\b2\s*k\b/i.test(name) && /upscal/i.test(name) && !isDisabledLike(el);
-  }) ?? null;
+    return name.length <= 80 && /\b2\s*k\b/i.test(name) && /upscal/i.test(name) && !isDisabledLike(el);
+  });
+  return candidates.sort((a, b) => upscaleItemScore(b) - upscaleItemScore(a))[0] ?? null;
+}
+
+function upscaleItemScore(el) {
+  let score = 0;
+  if (el.matches('button, a, [role="button"], [role="menuitem"], [role="option"]')) score += 100;
+  if (el.closest('[role="menu"], [role="listbox"], flow-menu')) score += 20;
+  score -= el.querySelectorAll('button, a, [role="button"], [role="menuitem"], [role="option"], div, span').length * 5;
+  return score;
 }
 
 function isDisabledLike(el) {
