@@ -139,7 +139,7 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
         <div role="dialog" aria-label="Project media">
           <h3>Use from project</h3>
           ${['Aron.png', 'Laboratory.png', 'Vex.png', 'Dropped.png', 'hero_sheet_v1.jpeg', 'hero_sheet_v2.jpeg']
-            .map((name) => `<button type="button" role="option" data-project-name="${name}" aria-label="${name}"><img alt="${name}" src="${PLACEHOLDER_IMAGE}">${name}</button>`)
+            .map((name) => `<button type="button" role="option" data-project-name="${name}" aria-label="${name}Image"><img alt="${name}" src="${PLACEHOLDER_IMAGE}">${name}Image</button>`)
             .join('')}
         </div>`;
       for (const item of overlay.querySelectorAll('[data-project-name]')) {

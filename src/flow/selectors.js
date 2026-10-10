@@ -247,17 +247,26 @@ export function readProjectMediaItems(picker) {
     // Keep leaf-most selectable tiles; containers otherwise create duplicate matches.
     if (node.querySelector('[role="option"], [role="gridcell"], [role="listitem"]')) continue;
     const image = node.matches('img') ? node : node.querySelector('img');
-    const name = normalizeText(
+    const name = cleanProjectMediaName(normalizeText(
       node.getAttribute('aria-label')
       || node.getAttribute('title')
       || image?.getAttribute('alt')
       || node.textContent,
-    );
+    ));
     if (!name || seen.has(node)) continue;
     seen.add(node);
     items.push({ el: node, name });
   }
   return items;
+}
+
+function cleanProjectMediaName(name) {
+  // Flow appends the media type directly to accessible tile text, producing
+  // labels such as "ref_aron_sheet_v1.jpegImage". It is metadata, not part of
+  // the uploaded filename.
+  return normalizeText(name)
+    .replace(/(\.(?:jpe?g|png|webp|gif|avif|heic|mp4|mov|webm))(?:image|video)$/i, '$1')
+    .replace(/\s+(?:image|video)$/i, '');
 }
 
 /** Hidden or visible file input used for uploads. */

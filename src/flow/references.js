@@ -1,5 +1,5 @@
 import { AutomationError, ERROR_CODES } from '../utils/errors.js';
-import { accessibleName, clickElement, pressEscape, queryAllVisible, waitForValue } from './dom.js';
+import { accessibleName, clickElement, pressEscape, queryAllVisible, setControlledValue, waitForValue } from './dom.js';
 import {
   findAddButton,
   findOpenPopover,
@@ -69,8 +69,20 @@ export async function attachReferences(ctx, payloads) {
 
   for (const payload of payloads) {
     const picker = await openProjectPicker(ctx, prompt.el);
-    const items = readProjectMediaItems(picker);
-    const match = matchProjectItem(payload.name, items);
+    let items = readProjectMediaItems(picker);
+    let match = matchProjectItem(payload.name, items);
+
+    // Project grids are virtualized, so an item below the fold may not exist in
+    // the DOM yet. Use Flow's own picker search before declaring it missing.
+    if (match.missing) {
+      const search = findPickerSearch(picker);
+      if (search) {
+        setControlledValue(search, payload.name);
+        await ctx.sleep(ctx.timings.settleMs);
+        items = readProjectMediaItems(picker);
+        match = matchProjectItem(payload.name, items);
+      }
+    }
     if (match.error) {
       await closePicker(ctx, picker);
       throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, match.error);
@@ -160,6 +172,7 @@ function matchProjectItem(wanted, items) {
 
   const available = items.map((item) => item.name).slice(0, 12);
   return {
+    missing: true,
     error: `No project media matches "${wanted}".${available.length ? ` Visible project items: ${available.join(', ')}.` : ' No named project items were visible.'}`,
   };
 }
@@ -180,6 +193,12 @@ function comparableBasename(value) {
 
 function ambiguousMessage(wanted, matches) {
   return `Project media "${wanted}" is ambiguous. Matches: ${matches.map((item) => item.name).join(', ')}.`;
+}
+
+function findPickerSearch(picker) {
+  return queryAllVisible(picker, 'input[type="search"], input[type="text"], input:not([type])').find((el) =>
+    /\b(search|find|filter)\b/i.test(`${accessibleName(el)} ${el.getAttribute('placeholder') ?? ''}`),
+  ) ?? null;
 }
 
 function findPickerConfirm(picker) {
