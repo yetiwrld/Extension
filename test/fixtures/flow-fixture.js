@@ -44,7 +44,7 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
       <div class="prompt-box" id="prompt-box">
         <div class="refs" id="refs"></div>
         <div class="controls-row">
-          <button type="button" id="add-btn" aria-haspopup="menu">+ Add</button>
+          <button type="button" id="add-btn" aria-haspopup="menu" aria-label="Add ingredients to the prompt box">+ Add</button>
           <button type="button" id="settings-btn" aria-haspopup="menu" aria-expanded="false">${state.model} \u25be</button>
           <button type="button" id="agent" role="switch" aria-checked="false">Agent</button>
         </div>

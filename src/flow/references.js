@@ -204,9 +204,13 @@ function findPickerSearch(picker) {
 function findPickerConfirm(picker, doc) {
   // Flow currently labels this action "Add to prompt" and may render it in a
   // dialog footer outside the inner media grid.
-  const addToPrompt = queryAllVisible(doc, 'button, [role="button"]').find((el) =>
-    /\badd\b.*\b(?:to\s+)?prompt\b/i.test(accessibleName(el)),
-  );
+  const addToPrompt = queryAllVisible(doc, 'button, [role="button"]').find((el) => {
+    const name = accessibleName(el);
+    // Do not confuse the composer's "Add ingredients to the prompt box"
+    // launcher with the picker's "Add to prompt" confirmation action.
+    return /^add(?:\s+\d+)?(?:\s+(?:selected\s+)?(?:items?|media|images?))?\s+to\s+(?:the\s+)?prompt\b/i.test(name)
+      && !/\bingredients?\b/i.test(name);
+  });
   if (addToPrompt) return addToPrompt;
   return queryAllVisible(picker, 'button, [role="button"]').find((el) =>
     /^(?:add|attach|insert|use|select|done)(?:\s+(?:\d+|selected|item(?:s)?))?$/i.test(accessibleName(el)),
