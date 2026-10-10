@@ -195,6 +195,37 @@ export function formatDiagnosticsReport(d) {
     lines.push(` - DOM added after the click: ${click.domAdded.length ? click.domAdded.join('; ') : 'nothing'}`);
     lines.push(` - DOM removed after the click: ${click.domRemoved.length ? click.domRemoved.join('; ') : 'nothing'}`);
   }
+  // Ground truth for the settings menu: what was already open, and what each
+  // activation route actually changed. This is the evidence that separates "the
+  // trigger opens nothing" from "another surface was read as the menu".
+  const openProbe = d.openProbe;
+  if (openProbe) {
+    lines.push('', 'Settings menu open probe:');
+    if (openProbe.before?.length) {
+      lines.push(' - already open before any press:');
+      for (const surface of openProbe.before) {
+        lines.push(
+          `   \u00b7 <${surface.tag}${surface.role ? ` role=${surface.role}` : ''} class="${surface.classes}">` +
+            `${surface.status ? ' [status surface]' : ''}${surface.inOverlay ? ' [overlay]' : ''}` +
+            `${surface.rows?.length ? ` shows: ${surface.rows.join(', ')}` : ''}`,
+        );
+      }
+    } else {
+      lines.push(' - nothing menu-like was open before the press');
+    }
+    for (const attempt of openProbe.attempts ?? []) {
+      lines.push(
+        ` - "${attempt.control}" via ${attempt.route}: ${attempt.opened ? 'a NEW surface appeared' : 'nothing new appeared'}` +
+          `, aria-expanded=${attempt.expanded}` +
+          `${attempt.opened ? `, generation menu: ${attempt.isGenerationMenu ? 'yes' : 'no'}` : ''}` +
+          `${attempt.rows?.length ? ` (${attempt.rows.join(', ')})` : ''}`,
+      );
+    }
+    if (!(openProbe.attempts ?? []).some((attempt) => attempt.opened)) {
+      lines.push(' - no activation route opened anything: this control does not open a menu for the extension');
+    }
+  }
+
   // The step-by-step trace of the settings read/apply (trigger found, menu opened,
   // each selection verified against the chip).
   const trace = d.settingsRead?.trace;

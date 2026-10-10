@@ -391,7 +391,8 @@ test('a settings menu that cannot be opened reports the backdrop and aria-expand
     () => adapter.readSettings(),
     (error) => {
       assert.match(error.message, /did not open/);
-      assert.match(error.message, /press(es)?\)/, 'the number of presses is reported');
+      assert.match(error.message, /press(es)?,/, 'the number of presses is reported');
+      assert.match(error.message, /keyboard Enter and Space/, 'the keyboard routes were tried too');
       return true;
     },
   );
@@ -456,4 +457,24 @@ test('a panel that was already open before the click is not the menu the click o
   assert.ok(read.options.aspectRatio.length > 0, 'the real generation menu was read');
   assert.ok(!JSON.stringify(read.options).includes('All media'), 'the rail is not read as settings');
   assert.ok(read.options.model.length > 0, 'the real model list was still read');
+});
+
+test('the open probe reports, route by route, whether anything opened', async () => {
+  // A control that opens nothing must be shown as opening nothing — for every
+  // activation route — instead of some other surface being read as its menu.
+  const { adapter } = fixturePage({ liveMenu: true, chipDead: true, libraryRail: true, snackbar: true });
+  const report = await adapter.diagnose();
+  const probe = report.openProbe;
+  assert.ok(probe, 'the probe ran');
+  assert.ok(probe.before.length > 0, 'the surfaces already open are recorded');
+  assert.ok(probe.attempts.length >= 3, 'every activation route is reported');
+  assert.ok(probe.attempts.every((attempt) => !attempt.opened), 'nothing opened, and nothing is claimed to have');
+});
+
+test('the open probe names the route that works', async () => {
+  const { adapter } = fixturePage({ liveMenu: true });
+  const probe = (await adapter.diagnose()).openProbe;
+  const worked = probe.attempts.find((attempt) => attempt.opened);
+  assert.ok(worked, 'a route opened the menu');
+  assert.equal(worked.isGenerationMenu, true, 'and it is recognised as the generation menu');
 });

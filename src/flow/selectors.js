@@ -1391,6 +1391,38 @@ export function surfaceSignature(el) {
   return normalizeText(el.textContent ?? '').slice(0, 200);
 }
 
+/**
+ * A read-only description of every menu-ish surface currently open: what it is,
+ * where it lives and the first rows it shows. This is the evidence needed to tell
+ * "the menu never opened" from "a different surface was read as the menu".
+ */
+export function inspectMenuSurfaces(doc, promptEl = null) {
+  const out = [];
+  for (const scope of collectMenuScopes(doc)) {
+    for (const el of scope.querySelectorAll(MENU_SELECTOR)) {
+      if (!isVisible(el)) continue;
+      if (out.length >= 10) break;
+      const rows = [];
+      for (const node of el.querySelectorAll('*')) {
+        if (rows.length >= 6) break;
+        if (!isVisible(node) || node.querySelector('*')) continue;
+        const text = normalizeText(ownText(node));
+        if (text && text.length <= 40 && !rows.includes(text)) rows.push(text);
+      }
+      out.push({
+        tag: el.tagName.toLowerCase(),
+        role: el.getAttribute('role') ?? null,
+        classes: (el.getAttribute('class') ?? '').slice(0, 60),
+        status: isStatusSurface(el),
+        inOverlay: Boolean(el.closest?.('.cdk-overlay-container, .cdk-overlay-pane')),
+        inComposer: Boolean(promptEl && findPromptRegion(promptEl)?.contains(el)),
+        rows,
+      });
+    }
+  }
+  return out;
+}
+
 /** Snapshot of the surfaces open BEFORE a trigger is clicked: element -> content. */
 export function snapshotOpenMenus(doc, { exclude = null } = {}) {
   const map = new Map();

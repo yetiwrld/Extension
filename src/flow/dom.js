@@ -135,6 +135,31 @@ export function readEditableText(el) {
   return el.innerText ?? el.textContent ?? '';
 }
 
+/**
+ * Activate a control with the KEYBOARD.
+ *
+ * Measured live: a full synthetic pointer+click sequence on Flow's settings trigger
+ * changed nothing (aria-expanded stayed false, no DOM was added). Angular Material
+ * menu triggers also open on Enter and Space, so keyboard activation is a genuine
+ * second route rather than a repeat of the same press.
+ */
+export function pressKeyOn(el, key) {
+  const view = el.ownerDocument.defaultView;
+  el.focus?.({ preventScroll: true });
+  const init = {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+    view,
+    key,
+    code: key === ' ' ? 'Space' : key,
+    keyCode: key === 'Enter' ? 13 : 32,
+    which: key === 'Enter' ? 13 : 32,
+  };
+  el.dispatchEvent(new view.KeyboardEvent('keydown', init));
+  el.dispatchEvent(new view.KeyboardEvent('keyup', init));
+}
+
 export function pressEscape(doc) {
   const target = doc.activeElement || doc.body;
   const init = { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true };

@@ -5,6 +5,7 @@ import { applyFlowSettings, readFlowSettings } from './settings.js';
 import { insertPrompt } from './prompt.js';
 import { attachReferences, clearReferences, countAttachedReferences, probeDropAcceptance } from './references.js';
 import { attachFromProject } from './project-library.js';
+import { probeSettingsOpen } from './settings.js';
 import { generationStatus as readGenerationStatus, snapshotOutputs as takeOutputSnapshot } from './outputs.js';
 import {
   candidateSummaries,
@@ -239,6 +240,17 @@ export function createFlowAdapter(options = {}) {
           readExceptions.push({ label: 'settings read', message: payload.message, stack: trimStack(error) });
         }
       }
+      // Ground truth about the trigger: what was open BEFORE any press, and what each
+      // activation route changes. This is what distinguishes "the menu never opens"
+      // from "another surface is being read as the menu".
+      let openProbe = null;
+      if (probe.promptFound) {
+        try {
+          openProbe = await probeSettingsOpen(ctx);
+        } catch (error) {
+          readExceptions.push({ label: 'settings open probe', message: error.message, stack: trimStack(error) });
+        }
+      }
       const chipModel = probe.detectedSettings?.model ?? null;
       const checks = [
         check(
@@ -297,6 +309,7 @@ export function createFlowAdapter(options = {}) {
         ...probe,
         checks,
         settingsRead,
+        openProbe,
         modelChip: chipModel,
         exceptions: [...(probe.exceptions ?? []), ...readExceptions],
         adapterVersion: ADAPTER_VERSION,

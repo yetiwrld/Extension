@@ -1,7 +1,8 @@
 import { AutomationError, ERROR_CODES } from '../utils/errors.js';
 import { matchModelOption, modelLabelsMatch } from './model-id.js';
-import { accessibleName, clickElement, clickOutside, isVisible, normalizeText, pressEscape, waitForValue } from './dom.js';
+import { accessibleName, clickElement, pressKeyOn, clickOutside, isVisible, normalizeText, pressEscape, waitForValue } from './dom.js';
 import {
+  inspectMenuSurfaces,
   snapshotOpenMenus,
   findSettingsTriggerCandidates,
   classifyComposerState,
@@ -586,6 +587,19 @@ async function openSettingsPopover(ctx, trigger, promptEl, chip = null) {
       popover = await clickAndWait(ctx, freshControl, promptEl, chipModel, preExisting);
     }
   }
+  // Keyboard activation: a Material menu trigger opens on Enter and Space too, and
+  // the live page did not react to the pointer sequence at all. Each route is
+  // reported, so the diagnostic says WHICH one Flow accepts.
+  let openedBy = popover ? 'pointer click' : null;
+  for (const key of popover ? [] : ['Enter', ' ']) {
+    const target = findSettingsTrigger(ctx.doc, promptEl)?.el ?? (control.isConnected ? control : null);
+    if (!target) break;
+    popover = await clickAndWait(ctx, target, promptEl, chipModel, preExisting, (el) => pressKeyOn(el, key));
+    if (popover) {
+      openedBy = key === ' ' ? 'keyboard Space' : 'keyboard Enter';
+      break;
+    }
+  }
   if (!popover) {
     // The press was swallowed (a backdrop was dismissed by it, or the menu toggled
     // shut and open within one frame): let the overlays settle and press ONCE more.
@@ -605,6 +619,7 @@ async function openSettingsPopover(ctx, trigger, promptEl, chip = null) {
     clicked: wasConnected,
     retried,
     reclicked,
+    openedBy,
     expandedBefore,
     expandedAfter: isExpanded(findSettingsTrigger(ctx.doc, promptEl)?.el ?? control),
     backdropsBefore: settled.backdropsBefore,
@@ -622,7 +637,7 @@ async function openSettingsPopover(ctx, trigger, promptEl, chip = null) {
     const ariaNote = click.expandedAfter ? ' The control now reports aria-expanded="true", so Flow thinks a menu is open but none could be found.' : '';
     throw new AutomationError(
       ERROR_CODES.FLOW_UI_CHANGED,
-      `The Flow settings menu did not open after clicking "${label}" (${reclicked ? '2 presses' : '1 press'}). No menu appeared within ${Math.round(ctx.timings.popoverMs / 1000)}s.${changed}${overlayNote}${ariaNote} ` +
+      `The Flow settings menu did not open after clicking "${label}" (${reclicked ? '2 presses' : '1 press'}, then keyboard Enter and Space). No menu appeared within ${Math.round(ctx.timings.popoverMs / 1000)}s.${changed}${overlayNote}${ariaNote} ` +
         'Run "Check Flow page" in Settings for the full report.',
     );
   }
@@ -656,9 +671,9 @@ async function settleOverlays(ctx) {
 }
 
 /** Click the control and wait for a menu to appear anywhere in the document. */
-async function clickAndWait(ctx, control, promptEl, chipModel, ignore = null) {
+async function clickAndWait(ctx, control, promptEl, chipModel, ignore = null, activate = clickElement) {
   if (!control.isConnected) return null;
-  clickElement(control);
+  activate(control);
   return waitForValue(() => findSettingsMenu(ctx.doc, { exclude: promptEl, chipModel, ignore }), {
     timeoutMs: ctx.timings.popoverMs,
     intervalMs: 80,
@@ -842,4 +857,48 @@ function valuesMatch(key, a, b) {
 
 function labelFor(key) {
   return { mode: 'Mode', model: 'Model', aspectRatio: 'Aspect ratio', outputs: 'output count' }[key] ?? key;
+}
+
+/**
+ * Read-only investigation of the settings trigger.
+ *
+ * It records every menu-ish surface open BEFORE anything is pressed, then tries each
+ * activation route in turn (pointer click, Enter, Space) and records what each one
+ * added. Nothing is submitted and nothing is removed from Flow's DOM; any surface
+ * that opens is closed again. The point is evidence: if no route adds a surface, the
+ * trigger genuinely does not open a menu, and the report says so instead of reading
+ * whatever else happens to be on screen.
+ */
+export async function probeSettingsOpen(ctx) {
+  const prompt = requirePromptBox(ctx.doc);
+  const before = inspectMenuSurfaces(ctx.doc, prompt.el);
+  const candidates = findSettingsTriggerCandidates(ctx.doc, prompt.el);
+  const attempts = [];
+  for (const trigger of candidates.slice(0, 2)) {
+    for (const route of ['click', 'Enter', ' ']) {
+      const snapshot = snapshotOpenMenus(ctx.doc, { exclude: prompt.el });
+      const target = trigger.el;
+      if (!target?.isConnected) continue;
+      if (route === 'click') clickElement(target);
+      else pressKeyOn(target, route);
+      const surface = await waitForValue(
+        () => pickNewMenuSurface(ctx.doc, null, prompt.el, { ignore: snapshot }),
+        { timeoutMs: ctx.timings.popoverMs, intervalMs: 100, sleep: ctx.sleep },
+      );
+      const rows = surface ? readPopoverOptions(surface).map((option) => option.name).filter(Boolean).slice(0, 8) : [];
+      attempts.push({
+        control: triggerLabel(trigger),
+        route: route === ' ' ? 'keyboard Space' : route === 'Enter' ? 'keyboard Enter' : 'pointer click',
+        opened: Boolean(surface),
+        expanded: isExpanded(target),
+        isGenerationMenu: surface ? recognizeGenerationMenu(readPopoverOptions(surface), { model: null }).ok : false,
+        rows,
+      });
+      if (surface) {
+        await closePopover(ctx, surface);
+        break;
+      }
+    }
+  }
+  return { before, attempts, after: inspectMenuSurfaces(ctx.doc, prompt.el) };
 }
