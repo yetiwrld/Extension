@@ -145,8 +145,10 @@ Transitions that are not in the tables throw `INVALID_STATE`. The tables are tes
 
 ## Permissions and data
 
-- Permissions: `sidePanel`, `storage`, `scripting`. Host access only to `https://flow.google.com/*`
-  and `https://labs.google/fx/tools/flow*`. No `tabs` permission and no all-sites access.
+- Permissions: `sidePanel`, `storage`, `scripting`, and `debugger`. Host access only to
+  `https://flow.google.com/*` and `https://labs.google/fx/tools/flow*`. The debugger permission is
+  attached only for the milliseconds needed to send one trusted click to Flow's Generate button,
+  then detached immediately. No `tabs` permission and no all-sites access.
 - Stored locally in the browser: preferences, the scene document and queue, the activity log, and
   reference metadata in `chrome.storage`; reference image bytes in IndexedDB (`flow-scene-queue`).
   Nothing is sent to any server by this extension.

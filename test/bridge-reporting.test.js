@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createFlowBridge,
+  dispatchTrustedClick,
   isNoReceiverError,
   isNotDeliveredError,
   INJECT_FAILED_MESSAGE,
@@ -41,6 +42,26 @@ function fakeChrome({ sendAnswers = [], injectError = null, status = null } = {}
     },
   };
 }
+
+test('trusted Generate fallback dispatches one CDP mouse click and always detaches', async () => {
+  const commands = [];
+  const chromeApi = {
+    debugger: {
+      attach: async () => {},
+      sendCommand: async (_target, method, params) => commands.push({ method, params }),
+      detach: async () => commands.push({ method: 'detach' }),
+    },
+  };
+  assert.equal(await dispatchTrustedClick(chromeApi, 7, { x: 320, y: 640 }), true);
+  assert.deepEqual(commands.map((item) => item.method), [
+    'Input.dispatchMouseEvent',
+    'Input.dispatchMouseEvent',
+    'Input.dispatchMouseEvent',
+    'detach',
+  ]);
+  assert.equal(commands[1].params.type, 'mousePressed');
+  assert.equal(commands[2].params.type, 'mouseReleased');
+});
 
 test('a command is never sent again after its reply was lost, because it may already have run', async () => {
   const chromeApi = fakeChrome({ sendAnswers: [new Error(PORT_CLOSED)] });

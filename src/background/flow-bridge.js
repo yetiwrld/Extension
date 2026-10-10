@@ -152,6 +152,36 @@ export function isFlowUrl(url) {
   }
 }
 
+/** Dispatch a genuine browser-level click. Flow ignores synthetic DOM clicks on some accounts. */
+export async function dispatchTrustedClick(chromeApi, tabId, point) {
+  if (!chromeApi.debugger || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return false;
+  const target = { tabId };
+  let attached = false;
+  try {
+    await chromeApi.debugger.attach(target, '1.3');
+    attached = true;
+    const common = { x: point.x, y: point.y, button: 'left', clickCount: 1 };
+    await chromeApi.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseMoved', x: point.x, y: point.y });
+    await chromeApi.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mousePressed', ...common });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await chromeApi.debugger.sendCommand(target, 'Input.dispatchMouseEvent', { type: 'mouseReleased', ...common });
+    return true;
+  } catch (error) {
+    throw new AutomationError(
+      ERROR_CODES.GENERATE_UNAVAILABLE,
+      `Chrome could not send a trusted click to Flow's Generate button. Close DevTools for the Flow tab and retry. Details: ${messageOf(error)}`,
+    );
+  } finally {
+    if (attached) {
+      try {
+        await chromeApi.debugger.detach(target);
+      } catch {
+        // Chrome also detaches automatically when a tab closes.
+      }
+    }
+  }
+}
+
 /**
  * @param {object} options
  * @param {() => number|null} options.getTabId
@@ -230,6 +260,17 @@ export function createFlowBridge({ getTabId, chromeApi = globalThis.chrome, time
   for (const method of FLOW_PORT_METHODS) {
     port[method] = (payload) => call(method, payload, { timeout: commandTimeoutMs(method, payload, timeoutMs) });
   }
+  // Synthetic HTMLElement.click() is ignored by Flow's current trusted-event
+  // guard on some accounts. The content script returns the verified button's
+  // viewport center; use one CDP click only when the normal route showed no
+  // acceptance evidence.
+  port.submit = async () => {
+    const result = await call('submit', null, { timeout: commandTimeoutMs('submit', null, timeoutMs) });
+    if (result?.accepted) return result;
+    const tab = await resolveTab();
+    const trusted = await dispatchTrustedClick(chromeApi, tab.id, result?.clickTarget);
+    return { ...result, accepted: trusted, fallback: trusted ? 'cdp-trusted-click' : result?.fallback };
+  };
   port.diagnose = () => call('diagnose', null, { timeout: 15000 });
   /** Diagnostics for a specific tab (used before any tab is bound). */
   port.diagnoseTab = async (tabId) => {

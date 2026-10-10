@@ -23,7 +23,7 @@ import { accessibleName, clickElement, normalizeText, readEditableText } from '.
  * All failures are AutomationError with a stable code.
  */
 
-export const ADAPTER_VERSION = '1.5.1';
+export const ADAPTER_VERSION = '1.6.0';
 
 export const DEFAULT_TIMINGS = Object.freeze({
   settleMs: 350,
@@ -158,7 +158,11 @@ export function createFlowAdapter(options = {}) {
         await sleep(Math.max(timings.settleMs, 500));
         accepted = submissionChanged(doc, prompt.el, generate.el, promptBefore);
       }
-      return { clicked: true, accepted, strategy: generate.strategy, fallback };
+      const rect = generate.el.getBoundingClientRect?.();
+      const clickTarget = rect && rect.width > 0 && rect.height > 0
+        ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+        : null;
+      return { clicked: true, accepted, strategy: generate.strategy, fallback, clickTarget };
     },
 
     /** Output and progress state since `baseline`. */

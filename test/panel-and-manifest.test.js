@@ -123,7 +123,7 @@ test('the side panel example matches the shipped example document', () => {
 
 test('the manifest uses Manifest V3 with side panel, storage and scripting only', () => {
   assert.equal(manifest.manifest_version, 3);
-  assert.deepEqual(manifest.permissions.sort(), ['scripting', 'sidePanel', 'storage']);
+  assert.deepEqual(manifest.permissions.sort(), ['debugger', 'scripting', 'sidePanel', 'storage']);
   assert.ok(!manifest.permissions.includes('tabs'), 'tab URLs come from host permissions; no broad tabs permission');
   assert.ok(manifest.host_permissions.includes('https://flow.google.com/*'));
   assert.ok(manifest.host_permissions.some((host) => host.startsWith('https://labs.google/fx/tools/flow')));
