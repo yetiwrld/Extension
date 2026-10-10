@@ -306,11 +306,14 @@ export function createFlowBridge({ getTabId, chromeApi = globalThis.chrome, time
   port.downloadLatest2k = async (payload) => {
     const timeout = commandTimeoutMs('downloadLatest2k', payload, timeoutMs);
     const result = await call('downloadLatest2k', payload, { timeout });
-    if (result?.requested || result?.retry !== 'trusted-hover') return result;
+    if (result?.requested || !['trusted-hover', 'trusted-hover-download'].includes(result?.retry)) return result;
     const tab = await resolveTab();
     const hovered = await dispatchTrustedHover(chromeApi, tab.id, result.hoverTarget);
     if (!hovered) return result;
-    return call('downloadLatest2k', { ...payload, trustedHover: true }, { timeout });
+    const continuation = result.retry === 'trusted-hover-download'
+      ? { ...payload, qualityOnly: true, outputKey: result.outputKey }
+      : { ...payload, trustedHover: true };
+    return call('downloadLatest2k', continuation, { timeout });
   };
   port.diagnose = () => call('diagnose', null, { timeout: 15000 });
   /** Diagnostics for a specific tab (used before any tab is bound). */

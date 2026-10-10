@@ -259,7 +259,7 @@ export function installFlowFixture(window, {
     };
     const control = doc.createElement('button');
     control.type = 'button';
-    if (downloadVariant === 'menu' || downloadVariant === 'plain-menu') {
+    if (['menu', 'plain-menu', 'trusted-submenu'].includes(downloadVariant)) {
       control.setAttribute('aria-label', 'More actions');
       control.textContent = '⋮';
       control.addEventListener('click', () => {
@@ -268,7 +268,7 @@ export function installFlowFixture(window, {
           : '<div role="menu"><button type="button" role="menuitem">Download</button></div>';
         const row = overlay.querySelector(downloadVariant === 'plain-menu' ? '.download-row' : '[role="menuitem"]');
         row.addEventListener('click', () => state.downloads.push(`1K-${outputNumber}`));
-        row.addEventListener('mouseover', showQuality);
+        if (downloadVariant !== 'trusted-submenu') row.addEventListener('mouseover', showQuality);
       });
     } else {
       control.setAttribute('aria-label', 'Download media');

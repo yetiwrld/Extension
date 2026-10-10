@@ -78,6 +78,26 @@ test('trusted download hover moves Chrome\'s pointer without clicking', async ()
   assert.equal(commands[0].params.type, 'mouseMoved');
 });
 
+test('download fallback uses a trusted hover then continues in the open quality submenu', async () => {
+  const chromeApi = fakeChrome({
+    sendAnswers: [
+      { ok: true, data: { requested: false, retry: 'trusted-hover-download', hoverTarget: { x: 40, y: 60 }, outputKey: 'new-output' } },
+      { ok: true, data: { requested: true, quality: '2K Upscaled', outputKey: 'new-output' } },
+    ],
+  });
+  const commands = [];
+  chromeApi.debugger = {
+    attach: async () => {},
+    sendCommand: async (_target, method, params) => commands.push({ method, params }),
+    detach: async () => {},
+  };
+  const bridge = createFlowBridge({ getTabId: () => 7, chromeApi });
+  const result = await bridge.downloadLatest2k({ outputKeys: ['new-output'] });
+  assert.equal(result.requested, true);
+  assert.equal(chromeApi.calls.sends, 2);
+  assert.equal(commands[0].params.type, 'mouseMoved');
+});
+
 test('a command is never sent again after its reply was lost, because it may already have run', async () => {
   const chromeApi = fakeChrome({ sendAnswers: [new Error(PORT_CLOSED)] });
   const bridge = createFlowBridge({ getTabId: () => 7, chromeApi });

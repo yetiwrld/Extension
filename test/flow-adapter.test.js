@@ -402,6 +402,20 @@ test('finds Flow download rows even when the open menu uses plain divs without A
   assert.deepEqual(current.page.state.downloads, [1]);
 });
 
+test('requests a trusted hover when Flow keeps 2K in a second hover-only submenu', async () => {
+  await current.adapter.insertPrompt('Nested submenu output.');
+  const baseline = await current.adapter.snapshotOutputs();
+  await current.adapter.submit();
+  current.page.finishGeneration({ downloadVariant: 'trusted-submenu' });
+  const done = await current.adapter.generationStatus(baseline);
+
+  const result = await current.adapter.downloadLatest2k({ outputKeys: done.outputKeys });
+  assert.equal(result.requested, false);
+  assert.equal(result.retry, 'trusted-hover-download');
+  assert.ok(Number.isFinite(result.hoverTarget.x));
+  assert.deepEqual(current.page.state.downloads, []);
+});
+
 test('Generate becoming disabled is accepted as submission evidence before progress appears', async () => {
   await current.adapter.insertPrompt('Scene accepted by Flow.');
   const baseline = await current.adapter.snapshotOutputs();

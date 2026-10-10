@@ -3,9 +3,27 @@ import { accessibleName, clickElement, normalizeText, queryAllVisible, waitForVa
 import { findOutputMedia, findPromptBox } from './selectors.js';
 
 const DOWNLOAD_TIMEOUT_MS = 15000;
+const SYNTHETIC_SUBMENU_TIMEOUT_MS = 2500;
 
 /** Trigger Flow's native 2K Upscaled download for the newly completed output. */
 export async function downloadLatest2k(ctx, evidence = {}) {
+  // The background bridge uses this continuation after moving Chrome's real
+  // pointer over Flow's Download row. Do not reopen the card menu—the nested
+  // quality submenu is the UI we need to inspect now.
+  if (evidence.qualityOnly) {
+    const upscale = await waitForValue(() => find2kUpscaled(ctx.doc), {
+      timeoutMs: DOWNLOAD_TIMEOUT_MS,
+      intervalMs: 200,
+      sleep: ctx.sleep,
+    });
+    if (!upscale) {
+      throw new AutomationError(ERROR_CODES.DOWNLOAD_FAILED, 'Flow did not offer the "2K Upscaled" download option for the generated image.');
+    }
+    clickElement(upscale);
+    await ctx.sleep(Math.max(ctx.timings.settleMs, 2000));
+    return { requested: true, quality: '2K Upscaled', outputKey: evidence.outputKey ?? null };
+  }
+
   const prompt = findPromptBox(ctx.doc);
   const outputs = findOutputMedia(ctx.doc, prompt?.el ?? null);
   const wanted = new Set(evidence?.outputKeys ?? []);
@@ -25,6 +43,7 @@ export async function downloadLatest2k(ctx, evidence = {}) {
   await ctx.sleep(ctx.timings.settleMs);
 
   // Detail-view and some card variants expose Download media directly.
+  let submenuControl = null;
   let downloadControl = findDownloadMediaButton(ctx.doc, card);
   if (downloadControl) {
     clickElement(downloadControl);
@@ -57,6 +76,7 @@ export async function downloadLatest2k(ctx, evidence = {}) {
         }
         // Do not click the parent Download row: that can immediately download 1K.
         // Hovering opens its quality submenu.
+        submenuControl = downloadControl;
         hover(downloadControl);
       }
     } else {
@@ -83,7 +103,7 @@ export async function downloadLatest2k(ctx, evidence = {}) {
   }
 
   const upscale = await waitForValue(() => find2kUpscaled(ctx.doc), {
-    timeoutMs: DOWNLOAD_TIMEOUT_MS,
+    timeoutMs: submenuControl ? SYNTHETIC_SUBMENU_TIMEOUT_MS : DOWNLOAD_TIMEOUT_MS,
     intervalMs: 200,
     sleep: async (ms) => {
       if (downloadControl?.isConnected) hover(downloadControl);
@@ -91,6 +111,14 @@ export async function downloadLatest2k(ctx, evidence = {}) {
     },
   });
   if (!upscale) {
+    if (submenuControl?.isConnected) {
+      return {
+        requested: false,
+        retry: 'trusted-hover-download',
+        hoverTarget: centerOf(submenuControl),
+        outputKey: output.key,
+      };
+    }
     throw new AutomationError(ERROR_CODES.DOWNLOAD_FAILED, 'Flow did not offer the "2K Upscaled" download option for the generated image.');
   }
 
