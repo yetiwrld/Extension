@@ -94,21 +94,42 @@ export async function attachReferences(ctx, payloads) {
     clickElement(match.item.el);
     await ctx.sleep(ctx.timings.settleMs);
 
-    const confirm = findPickerConfirm(picker, ctx.doc);
-    if (!confirm) {
-      await closePicker(ctx, picker);
-      throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, `Flow did not show "Add to prompt" for "${payload.name}".`);
-    }
-    clickElement(confirm);
-    await ctx.sleep(ctx.timings.settleMs);
+    const accepted = () => countAttachedReferences(ctx.doc, prompt.el) >= baseline + attached + 1
+      || !picker.isConnected
+      || !isVisible(picker);
 
-    const confirmed = await waitForValue(
-      () => countAttachedReferences(ctx.doc, prompt.el) >= baseline + attached + 1 || !picker.isConnected || !isVisible(picker),
-      { timeoutMs: ATTACH_TIMEOUT_MS, intervalMs: 250, sleep: ctx.sleep },
-    );
+    // Flow has two live picker variants. One selects a tile and requires an
+    // explicit "Add to prompt" press; the other attaches immediately and closes
+    // the picker. Check for the immediate path before requiring a button.
+    let confirmed = accepted();
+    if (!confirmed) {
+      const confirm = findPickerConfirm(picker, ctx.doc);
+      if (confirm) {
+        clickElement(confirm);
+        await ctx.sleep(ctx.timings.settleMs);
+      } else {
+        // Give an auto-attached ingredient time to mount in the composer before
+        // deciding that this picker variant supplied neither confirmation path.
+        confirmed = await waitForValue(accepted, {
+          timeoutMs: ctx.timings.popoverMs,
+          intervalMs: 100,
+          sleep: ctx.sleep,
+        });
+      }
+    }
+    if (!confirmed) {
+      confirmed = await waitForValue(accepted, {
+        timeoutMs: ATTACH_TIMEOUT_MS,
+        intervalMs: 250,
+        sleep: ctx.sleep,
+      });
+    }
     await closePicker(ctx, picker);
     if (!confirmed) {
-      throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, `Flow did not accept "${payload.name}" after clicking "Add to prompt".`);
+      throw new AutomationError(
+        ERROR_CODES.REFERENCE_UPLOAD_FAILED,
+        `Flow did not accept "${payload.name}" from the project picker. No ingredient appeared and no usable "Add to prompt" action was available.`,
+      );
     }
     attached += 1;
   }

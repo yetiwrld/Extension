@@ -24,7 +24,12 @@ export const FIXTURE_CATALOG = Object.freeze({
 /** 1x1 transparent GIF, so the synthetic thumbnails load without network access. */
 const PLACEHOLDER_IMAGE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
-export function installFlowFixture(window, { variant = 'textarea', flowWithMissingUpload = false, opaqueReferenceChips = false } = {}) {
+export function installFlowFixture(window, {
+  variant = 'textarea',
+  flowWithMissingUpload = false,
+  opaqueReferenceChips = false,
+  projectPickerMode = 'confirm',
+} = {}) {
   const doc = window.document;
   const state = {
     mode: 'Image',
@@ -141,18 +146,23 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
           ${['Aron.png', 'Laboratory.png', 'Vex.png', 'Dropped.png', 'hero_sheet_v1.jpeg', 'hero_sheet_v2.jpeg']
             .map((name) => `<button type="button" role="option" data-project-name="${name}" aria-label="${name}Image" aria-selected="false"><img alt="${name}" src="${PLACEHOLDER_IMAGE}">${name}Image</button>`)
             .join('')}
-          <button type="button" id="add-to-prompt">Add to prompt</button>
+          ${projectPickerMode === 'confirm' ? '<button type="button" id="add-to-prompt">Add to prompt</button>' : ''}
         </div>`;
       const selectedProjectNames = new Set();
       for (const item of overlay.querySelectorAll('[data-project-name]')) {
         item.addEventListener('click', () => {
+          if (projectPickerMode === 'auto') {
+            addChip(item.dataset.projectName);
+            closePopover();
+            return;
+          }
           const selected = item.getAttribute('aria-selected') !== 'true';
           item.setAttribute('aria-selected', selected ? 'true' : 'false');
           if (selected) selectedProjectNames.add(item.dataset.projectName);
           else selectedProjectNames.delete(item.dataset.projectName);
         });
       }
-      overlay.querySelector('#add-to-prompt').addEventListener('click', () => {
+      overlay.querySelector('#add-to-prompt')?.addEventListener('click', () => {
         for (const name of selectedProjectNames) addChip(name);
         closePopover();
       });

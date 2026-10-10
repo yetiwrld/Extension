@@ -33,7 +33,13 @@ before(() => {
   globalThis.DataTransfer = FakeDataTransfer;
 });
 
-function createPage({ variant = 'textarea', url = 'https://flow.google.com/project/abc123', flowWithMissingUpload = false, opaqueReferenceChips = false } = {}) {
+function createPage({
+  variant = 'textarea',
+  url = 'https://flow.google.com/project/abc123',
+  flowWithMissingUpload = false,
+  opaqueReferenceChips = false,
+  projectPickerMode = 'confirm',
+} = {}) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { url, pretendToBeVisual: true });
   const { window } = dom;
   // jsdom has no layout: give every element a size so visibility and thumbnail heuristics apply.
@@ -43,7 +49,12 @@ function createPage({ variant = 'textarea', url = 'https://flow.google.com/proje
   window.Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
     return { width: 200, height: 200, top: 0, left: 0, right: 200, bottom: 200, x: 0, y: 0 };
   };
-  const page = installFlowFixture(window, { variant, flowWithMissingUpload, opaqueReferenceChips });
+  const page = installFlowFixture(window, {
+    variant,
+    flowWithMissingUpload,
+    opaqueReferenceChips,
+    projectPickerMode,
+  });
   const adapter = createFlowAdapter({
     doc: window.document,
     location: new URL(url),
@@ -225,6 +236,17 @@ test('picker closure confirms attachment when Flow renders an opaque ingredient 
   const result = await page.adapter.attachReferences([{ name: 'Aron.png' }, { name: 'Vex.png' }]);
   assert.equal(result.attached, 2);
   assert.deepEqual(page.page.state.references, ['Aron.png', 'Vex.png']);
+});
+
+test('auto-attach picker works sequentially for one, two and three scene references', async () => {
+  const names = ['Aron.png', 'Vex.png', 'Laboratory.png'];
+  for (let count = 1; count <= 3; count += 1) {
+    const page = createPage({ projectPickerMode: 'auto', opaqueReferenceChips: true });
+    const payloads = names.slice(0, count).map((name) => ({ name }));
+    const result = await page.adapter.attachReferences(payloads);
+    assert.equal(result.attached, count, `${count} reference(s)`);
+    assert.deepEqual(page.page.state.references, names.slice(0, count));
+  }
 });
 
 test('attached ingredient controls do not shrink the resolved prompt region and hide Add', async () => {
