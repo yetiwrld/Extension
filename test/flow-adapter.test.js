@@ -366,6 +366,31 @@ test('generation status follows progress, then completion, using only NEW output
   assert.equal(done.inProgress, false);
 });
 
+test('downloads the completed image through Flow\'s native 2K Upscaled option', async () => {
+  await current.adapter.insertPrompt('Download this scene.');
+  const baseline = await current.adapter.snapshotOutputs();
+  await current.adapter.submit();
+  current.page.finishGeneration();
+  const done = await current.adapter.generationStatus(baseline);
+
+  const result = await current.adapter.downloadLatest2k({ outputKeys: done.outputKeys });
+  assert.equal(result.requested, true);
+  assert.equal(result.quality, '2K Upscaled');
+  assert.deepEqual(current.page.state.downloads, [1]);
+});
+
+test('uses the new output three-dot menu, hovers Download, and never clicks 1K', async () => {
+  current.page.finishGeneration();
+  const baseline = await current.adapter.snapshotOutputs();
+  await current.adapter.insertPrompt('A second output.');
+  await current.adapter.submit();
+  current.page.finishGeneration({ downloadVariant: 'menu' });
+  const done = await current.adapter.generationStatus(baseline);
+
+  await current.adapter.downloadLatest2k({ outputKeys: done.outputKeys });
+  assert.deepEqual(current.page.state.downloads, [2]);
+});
+
 test('Generate becoming disabled is accepted as submission evidence before progress appears', async () => {
   await current.adapter.insertPrompt('Scene accepted by Flow.');
   const baseline = await current.adapter.snapshotOutputs();

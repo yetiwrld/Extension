@@ -16,6 +16,7 @@ test('the example queue runs one scene at a time, in order, with each scene uplo
   assert.equal(automationOf(store).phase, 'completed');
   assert.equal(flow.state.overlaps, 0, 'no submission may overlap an unfinished generation');
   assert.equal(flow.state.submits.length, 4);
+  assert.deepEqual(flow.state.downloads, ['out-1', 'out-2', 'out-3', 'out-4'], 'each completed scene requests exactly one download');
   assert.deepEqual(
     flow.state.submits.map((submit) => submit.prompt.slice(0, 12)),
     ['Wide establi', 'Medium shot ', 'Close-up of ', 'Mira steps o'],
@@ -240,6 +241,31 @@ test('a transient reference upload failure is retried once automatically', async
   const uploadsForSceneOne = flow.state.calls.filter((call) => Array.isArray(call) && call[0] === 'attach').slice(0, 2);
   assert.deepEqual(uploadsForSceneOne[0], ['attach', ['Aron.png', 'Laboratory.png']]);
   assert.deepEqual(uploadsForSceneOne[1], ['attach', ['Aron.png', 'Laboratory.png']]);
+});
+
+test('a transient 2K download failure retries without regenerating the completed scene', async () => {
+  const { runner, flow, store } = await createRunner({ flowScript: { downloadFailures: 2 } });
+
+  await runner.start({ tabId: 7 });
+  await runner.whenIdle();
+
+  assert.equal(flow.state.submits.length, 4);
+  assert.deepEqual(flow.state.downloads, ['out-1', 'out-2', 'out-3', 'out-4']);
+  assert.equal(flow.state.calls.filter((call) => Array.isArray(call) && call[0] === 'download2k').length, 6);
+  assert.deepEqual(queueOf(store).scenes.map((scene) => scene.status), ['completed', 'completed', 'completed', 'completed']);
+});
+
+test('an unavailable 2K option pauses after completion without regenerating or starting the next scene', async () => {
+  const { runner, flow, store } = await createRunner({ flowScript: { downloadFailures: 99 } });
+
+  await runner.start({ tabId: 7 });
+  await runner.whenIdle();
+
+  assert.equal(flow.state.submits.length, 1);
+  assert.equal(queueOf(store).scenes[0].status, 'completed');
+  assert.equal(queueOf(store).scenes[1].status, 'waiting');
+  assert.equal(automationOf(store).phase, 'paused');
+  assert.equal(automationOf(store).decision.type, 'download-failed');
 });
 
 test('a lost Flow tab pauses the queue (it does not fail the scene)', async () => {

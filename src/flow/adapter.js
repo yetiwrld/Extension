@@ -5,6 +5,7 @@ import { applyFlowSettings, readFlowSettings } from './settings.js';
 import { insertPrompt } from './prompt.js';
 import { attachReferences, clearReferences, countAttachedReferences } from './references.js';
 import { generationStatus as readGenerationStatus, snapshotOutputs as takeOutputSnapshot } from './outputs.js';
+import { downloadLatest2k as request2kDownload } from './download.js';
 import {
   findAgentToggle,
   findGenerateButton,
@@ -23,7 +24,7 @@ import { accessibleName, clickElement, normalizeText, readEditableText } from '.
  * All failures are AutomationError with a stable code.
  */
 
-export const ADAPTER_VERSION = '1.6.3';
+export const ADAPTER_VERSION = '1.6.4';
 
 export const DEFAULT_TIMINGS = Object.freeze({
   settleMs: 350,
@@ -168,6 +169,11 @@ export function createFlowAdapter(options = {}) {
     /** Output and progress state since `baseline`. */
     async generationStatus(baseline) {
       return readGenerationStatus(doc, baseline);
+    },
+
+    /** Request Flow's native 2K Upscaled download for the completed output. */
+    async downloadLatest2k(evidence) {
+      return request2kDownload(ctx, evidence);
     },
   };
 

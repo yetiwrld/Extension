@@ -3,7 +3,7 @@
 `src/flow/` is the only code that knows how Google Flow's page is built. Everything else
 talks to it through the commands listed in `src/shared/protocol.js`
 (`probe`, `readSettings`, `applySettings`, `clearReferences`, `attachReferences`,
-`insertPrompt`, `snapshotOutputs`, `submit`, `generationStatus`, `diagnose`).
+`insertPrompt`, `snapshotOutputs`, `submit`, `generationStatus`, `downloadLatest2k`, `diagnose`).
 
 ## Status: not verified against the live Flow page
 
@@ -31,6 +31,7 @@ the live page matches.
 | Outputs | `img` and `video` elements at least 96×96 px, outside the prompt region and menus. Key = `src`. | New output never seen → generation times out (fails safely) | `findOutputMedia` |
 | In progress | `[role="progressbar"]` or `[aria-busy="true"]` outside the prompt region. | Completion too early if a generation shows no indicator; never completes if an unrelated spinner stays on screen | `findProgressIndicators` |
 | Failure | Text of a `[role="alert"]` that was not on the page before submission. | Failure not reported → times out instead of failing fast | `findAlertTexts` |
+| 2K download | Controls associated with the newly observed output: either **Download media**, or the card's three-dot menu followed by hovering **Download**. Only an option containing both `2K` and `Upscaled` is clicked. | Queue pauses after three attempts; completed scene is never regenerated | `download.js` |
 
 Two safety properties do not depend on these heuristics being right:
 
@@ -57,6 +58,8 @@ Do this once on a real, signed-in Flow project before using the queue on real wo
    - the reference appears as a chip in Flow;
    - Generate is clicked (progress appears in the results);
    - the queue shows Completed only after the output is visible in Flow;
+   - Flow opens the new output's native download controls and selects **2K Upscaled** exactly once;
+   - no 1K/original download starts;
    - Flow's settings are unchanged after the run, apart from what you chose.
 6. Force a failure you can see in Flow, for example by leaving a required setting invalid. Confirm the
    scene shows Failed with Flow's own message, and that Retry, Skip and Stop are offered.

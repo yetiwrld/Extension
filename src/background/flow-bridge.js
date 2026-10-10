@@ -20,6 +20,7 @@ export const COMMAND_TIMEOUTS_MS = Object.freeze({
   applySettings: 90000,
   clearReferences: 45000,
   generationStatus: 15000,
+  downloadLatest2k: 45000,
 });
 
 /** Attaching files: the file picker, then one wait per file for Flow to show its thumbnail. */

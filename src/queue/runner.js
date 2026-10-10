@@ -773,9 +773,36 @@ export class AutomationRunner {
 
     switch (result.outcome) {
       case 'completed': {
-        await this.recordCompletion(sceneId, { ...result.evidence, manual: false });
-        await this.log('success', `Scene ${scene.numberLabel} completed.`, sceneId);
-        return { type: 'completed' };
+        const evidence = { ...result.evidence, manual: false };
+        let downloaded = false;
+        let downloadError = null;
+        for (let attempt = 1; attempt <= 3 && !downloaded; attempt += 1) {
+          try {
+            await this.flow.downloadLatest2k(evidence);
+            downloaded = true;
+          } catch (error) {
+            downloadError = error;
+            if (attempt < 3) await this.clock.sleep(2000);
+          }
+        }
+        await this.recordCompletion(sceneId, evidence);
+        if (downloaded) {
+          await this.log('success', `Scene ${scene.numberLabel} completed and its 2K upscaled image download was requested.`, sceneId);
+          return { type: 'completed' };
+        }
+        const payload = toErrorPayload(downloadError);
+        await this.log('error', `Scene ${scene.numberLabel} completed, but its 2K download failed: ${payload.message}`, sceneId);
+        return {
+          type: 'paused',
+          decision: {
+            type: 'download-failed',
+            sceneId,
+            code: payload.code,
+            title: `Scene ${scene.numberLabel} download failed`,
+            message: `${payload.message} The image is complete and will not be regenerated. Download it manually, then press Continue.`,
+            actions: ['continue', 'stop'],
+          },
+        };
       }
       case 'failed': {
         const decision = await this.failScene(

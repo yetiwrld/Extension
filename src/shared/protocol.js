@@ -30,6 +30,7 @@ export const FLOW_PORT_METHODS = Object.freeze([
   'snapshotOutputs',
   'submit',
   'generationStatus',
+  'downloadLatest2k',
 ]);
 
 /** Additional commands used for connection checks and diagnostics. */

@@ -40,6 +40,7 @@ export function installFlowFixture(window, {
     outputs: 0,
     alerts: [],
     submitted: [],
+    downloads: [],
   };
 
   doc.body.innerHTML = `
@@ -236,15 +237,44 @@ export function installFlowFixture(window, {
     resultsEl.appendChild(bar);
   });
 
-  function finishGeneration() {
+  function finishGeneration({ downloadVariant = 'direct' } = {}) {
     const bars = resultsEl.querySelectorAll('[role="progressbar"]');
     bars.forEach((bar) => bar.remove());
     state.generating = 0;
     state.outputs += 1;
+    const outputNumber = state.outputs;
+    const card = doc.createElement('article');
+    card.className = 'output-card';
     const img = doc.createElement('img');
-    img.setAttribute('src', `https://lh3.example.test/output-${state.outputs}.png`);
-    img.setAttribute('alt', `Generated ${state.outputs}`);
-    resultsEl.appendChild(img);
+    img.setAttribute('src', `https://lh3.example.test/output-${outputNumber}.png`);
+    img.setAttribute('alt', `Generated ${outputNumber}`);
+    const showQuality = () => {
+      overlay.innerHTML = '<div role="menu" aria-label="Download quality"><button type="button" role="menuitem">1K Original</button><flow-menu-item><button type="button" role="menuitem">2K Upscaled</button></flow-menu-item></div>';
+      const options = overlay.querySelectorAll('[role="menuitem"]');
+      options[0].addEventListener('click', () => state.downloads.push(`1K-${outputNumber}`));
+      options[1].addEventListener('click', () => {
+        state.downloads.push(outputNumber);
+        closePopover();
+      });
+    };
+    const control = doc.createElement('button');
+    control.type = 'button';
+    if (downloadVariant === 'menu') {
+      control.setAttribute('aria-label', 'More actions');
+      control.textContent = '⋮';
+      control.addEventListener('click', () => {
+        overlay.innerHTML = '<div role="menu"><button type="button" role="menuitem">Download</button></div>';
+        const row = overlay.querySelector('[role="menuitem"]');
+        row.addEventListener('click', () => state.downloads.push(`1K-${outputNumber}`));
+        row.addEventListener('mouseover', showQuality);
+      });
+    } else {
+      control.setAttribute('aria-label', 'Download media');
+      control.textContent = 'Download media';
+      control.addEventListener('click', showQuality);
+    }
+    card.append(img, control);
+    resultsEl.appendChild(card);
   }
 
   function failGeneration(message) {

@@ -119,6 +119,7 @@ export function scriptedFlow(script = {}) {
     overlaps: 0,
     uploadFailuresLeft: script.uploadFailures ?? 0,
     submitFailuresLeft: script.submitFailures ?? 0,
+    downloadFailuresLeft: script.downloadFailures ?? 0,
     settings: { mode: 'Image', model: 'Nano Banana Pro', aspectRatio: '16:9' },
     options: {
       mode: ['Image', 'Video'],
@@ -202,6 +203,16 @@ export function scriptedFlow(script = {}) {
       };
       state.submits.push({ prompt: state.promptText, attached: [...state.attached] });
       return { clicked: true };
+    },
+    async downloadLatest2k(evidence) {
+      state.calls.push(['download2k', evidence?.outputKeys ?? []]);
+      if (state.downloadFailuresLeft > 0) {
+        state.downloadFailuresLeft -= 1;
+        throw Object.assign(new Error('2K option unavailable.'), { code: 'DOWNLOAD_FAILED' });
+      }
+      state.downloads ??= [];
+      state.downloads.push(...(evidence?.outputKeys ?? []));
+      return { requested: true, quality: '2K Upscaled' };
     },
     async generationStatus(baseline) {
       state.pollCount += 1;
