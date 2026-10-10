@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Flow Scene Queue",
   "short_name": "Flow Queue",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Queue scenes from a document into Google Flow and generate them one at a time, waiting for each to finish. Uses your existing Flow session.",
   "minimum_chrome_version": "116",
   "permissions": ["sidePanel", "storage", "scripting", "debugger"],

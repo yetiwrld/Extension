@@ -76,17 +76,7 @@ export async function attachReferences(ctx, payloads) {
   // then reopen the narrowly-labelled Add ingredients control for the next.
   for (const payload of payloads) {
     const picker = await openProjectPicker(ctx, prompt.el);
-    let items = readProjectMediaItems(picker);
-    let match = matchProjectItem(payload.name, items);
-    if (match.missing) {
-      const search = findPickerSearch(picker);
-      if (search) {
-        setControlledValue(search, payload.name);
-        await ctx.sleep(ctx.timings.settleMs);
-        items = readProjectMediaItems(picker);
-        match = matchProjectItem(payload.name, items);
-      }
-    }
+    const match = await findProjectItem(ctx, picker, payload.name);
     if (match.error) {
       await closePicker(ctx, picker);
       throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, match.error);
@@ -178,21 +168,107 @@ async function openProjectPicker(ctx, promptEl) {
   return picker;
 }
 
-function matchProjectItem(wanted, items) {
-  const exact = items.filter((item) => sameName(item.name, wanted));
-  if (exact.length === 1) return { item: exact[0] };
-  if (exact.length > 1) return { error: ambiguousMessage(wanted, exact) };
-
-  const wantedBase = comparableBasename(wanted);
-  const fallback = items.filter((item) => comparableBasename(item.name) === wantedBase);
-  if (fallback.length === 1) return { item: fallback[0] };
-  if (fallback.length > 1) return { error: ambiguousMessage(wanted, fallback) };
-
-  const available = items.map((item) => item.name).slice(0, 12);
-  return {
-    missing: true,
-    error: `No project media matches "${wanted}".${available.length ? ` Visible project items: ${available.join(', ')}.` : ' No named project items were visible.'}`,
+async function findProjectItem(ctx, picker, wanted) {
+  const seen = new Map();
+  const remember = (items, location = null) => {
+    for (const item of items) {
+      const key = item.name.toLocaleLowerCase();
+      if (!seen.has(key)) seen.set(key, { name: item.name, location });
+    }
   };
+  const inspect = () => {
+    const items = readProjectMediaItems(picker);
+    remember(items);
+    const exact = items.filter((item) => sameName(item.name, wanted));
+    if (exact.length === 1) return { item: exact[0] };
+    if (exact.length > 1) return { error: ambiguousMessage(wanted, exact) };
+    return null;
+  };
+
+  let found = inspect();
+  if (found) return found;
+
+  // Prefer Flow's own search when this picker variant exposes it.
+  const search = findPickerSearch(picker);
+  if (search) {
+    setControlledValue(search, wanted);
+    await ctx.sleep(ctx.timings.settleMs);
+    found = inspect();
+    if (found) return found;
+    setControlledValue(search, '');
+    await ctx.sleep(ctx.timings.settleMs);
+  }
+
+  // Flow virtualizes the project grid: only on-screen tiles exist in the DOM.
+  // Walk every scrollable viewport and inspect each rendered page rather than
+  // concluding that an off-screen project asset is missing.
+  const fallbackCandidates = [];
+  for (const scroller of projectScrollers(picker)) {
+    const original = scroller.scrollTop;
+    const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const step = Math.max(240, Math.floor(scroller.clientHeight * 0.8));
+    for (let top = 0, rounds = 0; top <= max && rounds < 100; top += step, rounds += 1) {
+      scroller.scrollTop = Math.min(top, max);
+      dispatchScroll(scroller);
+      await ctx.sleep(ctx.timings.settleMs);
+      const items = readProjectMediaItems(picker);
+      remember(items, { scroller, top: scroller.scrollTop });
+      const exact = items.filter((item) => sameName(item.name, wanted));
+      if (exact.length === 1) return { item: exact[0] };
+      if (exact.length > 1) return { error: ambiguousMessage(wanted, exact) };
+      for (const item of items) {
+        if (comparableBasename(item.name) === comparableBasename(wanted)) {
+          fallbackCandidates.push({ name: item.name, location: { scroller, top: scroller.scrollTop } });
+        }
+      }
+      if (scroller.scrollTop >= max) break;
+    }
+    scroller.scrollTop = original;
+    dispatchScroll(scroller);
+  }
+
+  const uniqueFallback = Array.from(new Map(fallbackCandidates.map((item) => [item.name.toLocaleLowerCase(), item])).values());
+  if (uniqueFallback.length > 1) return { error: ambiguousMessage(wanted, uniqueFallback) };
+  if (uniqueFallback.length === 1) {
+    const candidate = uniqueFallback[0];
+    candidate.location.scroller.scrollTop = candidate.location.top;
+    dispatchScroll(candidate.location.scroller);
+    await ctx.sleep(ctx.timings.settleMs);
+    const item = readProjectMediaItems(picker).find((entry) => sameName(entry.name, candidate.name));
+    if (item) return { item };
+  }
+
+  const currentFallback = readProjectMediaItems(picker).filter(
+    (item) => comparableBasename(item.name) === comparableBasename(wanted),
+  );
+  if (currentFallback.length === 1) return { item: currentFallback[0] };
+  if (currentFallback.length > 1) return { error: ambiguousMessage(wanted, currentFallback) };
+
+  const allFallbackNames = Array.from(seen.values()).filter(
+    (item) => comparableBasename(item.name) === comparableBasename(wanted),
+  );
+  if (allFallbackNames.length > 1) return { error: ambiguousMessage(wanted, allFallbackNames) };
+
+  const available = Array.from(seen.values()).map((entry) => entry.name).slice(0, 30);
+  return {
+    error: `No project media matches "${wanted}" after checking ${seen.size} project item${seen.size === 1 ? '' : 's'}.${available.length ? ` Items checked: ${available.join(', ')}.` : ' No named project items were available.'}`,
+  };
+}
+
+function projectScrollers(picker) {
+  return [picker, ...picker.querySelectorAll('*')]
+    .filter((el) => Number(el.scrollHeight) > Number(el.clientHeight) + 8)
+    .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
+}
+
+function dispatchScroll(el) {
+  const view = el.ownerDocument.defaultView;
+  el.dispatchEvent(new view.Event('scroll', { bubbles: true }));
+  try {
+    el.dispatchEvent(new view.WheelEvent('wheel', { bubbles: true, deltaY: 400 }));
+  } catch {
+    // Scroll itself is enough for browsers without a constructible WheelEvent.
+  }
 }
 
 function sameName(a, b) {
