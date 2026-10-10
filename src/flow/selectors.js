@@ -213,6 +213,53 @@ export function findUploadMenuItem(doc) {
   return item ? { el: item, strategy: 'upload-menu-item' } : null;
 }
 
+/** Flow's supported route for attaching media that is already in the project. */
+export function findUseFromProjectMenuItem(doc) {
+  const popover = findOpenPopover(doc) ?? doc;
+  const item = queryAllVisible(popover, '[role="menuitem"], [role="option"], button, [role="button"], li').find((el) =>
+    /\b(use|add|choose|select)\b.*\b(project|media|ingredient)/i.test(accessibleName(el))
+      || /\bfrom project\b/i.test(accessibleName(el)),
+  );
+  return item ? { el: item, strategy: 'use-from-project-menu-item' } : null;
+}
+
+/** Visible project-media chooser opened from Add > Use from project. */
+export function findProjectMediaPicker(doc) {
+  const candidates = queryAllVisible(doc, '[role="dialog"], [role="listbox"], [role="grid"], [role="menu"], mat-dialog-container')
+    .map((el) => {
+      const text = normalizeText(`${el.getAttribute?.('aria-label') ?? ''} ${el.textContent ?? ''}`);
+      const itemCount = queryAllVisible(el, '[role="option"], [role="gridcell"], [role="listitem"], img').length;
+      return { el, text, itemCount };
+    })
+    .filter(({ text, itemCount }) => /\b(project|media|ingredient|asset|reference)\b/i.test(text) && itemCount > 0)
+    // Prefer the enclosing dialog over an inner grid so confirmation controls
+    // remain in scope. A real picker also has more media descendants than tabs.
+    .sort((a, b) => b.itemCount - a.itemCount);
+  return candidates[0]?.el ?? null;
+}
+
+/** Selectable entries and their readable names in the project-media chooser. */
+export function readProjectMediaItems(picker) {
+  const nodes = queryAllVisible(picker, '[role="option"], [role="gridcell"], [role="listitem"], [data-testid*="tile" i], [class*="tile"]');
+  const items = [];
+  const seen = new Set();
+  for (const node of nodes) {
+    // Keep leaf-most selectable tiles; containers otherwise create duplicate matches.
+    if (node.querySelector('[role="option"], [role="gridcell"], [role="listitem"]')) continue;
+    const image = node.matches('img') ? node : node.querySelector('img');
+    const name = normalizeText(
+      node.getAttribute('aria-label')
+      || node.getAttribute('title')
+      || image?.getAttribute('alt')
+      || node.textContent,
+    );
+    if (!name || seen.has(node)) continue;
+    seen.add(node);
+    items.push({ el: node, name });
+  }
+  return items;
+}
+
 /** Hidden or visible file input used for uploads. */
 export function findFileInput(doc, { includeHidden = true } = {}) {
   const inputs = Array.from(doc.querySelectorAll('input[type="file"]'));

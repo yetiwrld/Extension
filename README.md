@@ -29,9 +29,10 @@ previous output. It uses your existing Flow session. It stores no Google credent
   Optional title after the marker (`[Scene 2]: Vex arrives`). `Reference images:` lines are
   removed from the prompt. The prompt text is otherwise inserted exactly as written. Duplicate
   numbers and empty prompts block the queue and are named in the message.
-- **Reference library.** Add PNG, JPG, WEBP or GIF files (25 MB each, 40 MB per scene). Files are
-  matched by exact filename, case-insensitively by default. Each scene uploads only its own
-  references.
+- **Reference library.** Add PNG, JPG, WEBP or GIF files (25 MB each, 40 MB per scene), and upload
+  those files to the Flow project once. For each scene, the extension uses **Add → Use from project**
+  and attaches only its references. It prefers an exact filename, then a case-insensitive basename
+  without an extension or version suffix; missing or ambiguous project items are never guessed.
 - **Missing and ambiguous references.** Missing references block Start and are listed per scene with
   an **Add** button for that exact name. A bare name that fits several files (for example `Aron`
   when `Aron.png` and `Aron_Closeup.png` both exist) is never picked automatically. You choose the
@@ -64,11 +65,12 @@ npm run build          # produces dist/
    the `dist/` folder.
 2. Open a Flow project in a tab (`https://flow.google.com/project/...`).
 3. Click the extension icon. The side panel opens beside Flow.
-4. Click **Add images** and add the reference files your scenes name.
-5. Paste your scene document and press **Analyze scenes**. Fix any problems listed.
-6. Check **Flow settings** (they are read from Flow automatically on first connection; press
+4. Upload the reference images to the Flow project once, using Flow's UI.
+5. In the extension, click **Add images** and add the same files so scene names can be validated.
+6. Paste your scene document and press **Analyze scenes**. Fix any problems listed.
+7. Check **Flow settings** (they are read from Flow automatically on first connection; press
    **Read from Flow** to refresh).
-7. Press **Start queue** and confirm. Watch the queue. Each scene shows its status.
+8. Press **Start queue** and confirm. Watch the queue. Each scene shows its status.
 
 To try the included example: add the four images from `examples/reference-library/`, then press
 **Load example** and **Analyze scenes**. You should see four scenes, all references matched.
@@ -103,8 +105,9 @@ references. `none` means no references. Text before the first marker is ignored,
   once the click may have reached Flow its outcome must be recorded.
 - **Completed scenes stay completed.** Starting the queue never regenerates them. **Regenerate**
   queues one again explicitly. A scene whose text changed after completion is reported as a new scene.
-- **References are exact.** Each scene carries only its own references: the reference slot is
-  cleared before every upload, and the upload is confirmed by Flow before the prompt is inserted.
+- **References are verified.** Each scene carries only its own references: the reference slot is
+  cleared first, each named item is selected through **Use from project**, and its chip is confirmed
+  before the prompt is inserted. Missing or ambiguous project items stop the scene.
 - **Errors are never silent.** Every failure names its cause and offers a next step.
 
 ### State machine (specification names → implementation)
@@ -134,7 +137,7 @@ Transitions that are not in the tables throw `INVALID_STATE`. The tables are tes
 | `FLOW_AGENT_ON` | Agent mode is on in the prompt box | Turn Agent off, then Resume |
 | `FLOW_SETTING_FAILED` | Flow did not keep a setting | Set it in Flow, then Resume or Retry |
 | `REFERENCE_MISSING` / `REFERENCE_AMBIGUOUS` | Reference not in the library, or several files match | Add the file, or choose one in the scene row |
-| `REFERENCE_UPLOAD_FAILED` / `REFERENCE_CLEAR_FAILED` | Flow did not confirm the upload or removal | Check Flow, then Retry |
+| `REFERENCE_UPLOAD_FAILED` / `REFERENCE_CLEAR_FAILED` | Project media was missing/ambiguous, or Flow did not confirm attachment/removal | Upload or rename the project item, then Retry |
 | `PROMPT_INSERT_FAILED` | Flow did not keep the prompt text | Check the prompt box, then Retry |
 | `GENERATE_UNAVAILABLE` | Generate is missing or disabled | Check the prompt and settings, then Retry |
 | `GENERATION_NOT_STARTED` / `GENERATION_FAILED` / `GENERATION_TIMEOUT` | Flow did not start, reported an error, or did not finish | Check Flow. Mark completed if the output exists, otherwise Retry |

@@ -199,24 +199,34 @@ test('insertPrompt verifies rich-text prompt boxes as well', async () => {
   assert.equal(rich.page.promptEl.textContent, 'A rich text prompt.');
 });
 
-test('attachReferences uses the Add > Upload path and confirms each file Flow shows', async () => {
+test('attachReferences uses Add > Use from project and confirms each chip', async () => {
   const payloads = [
-    { name: 'Aron.png', mime: 'image/png', base64: Buffer.from('a').toString('base64') },
-    { name: 'Laboratory.png', mime: 'image/png', base64: Buffer.from('b').toString('base64') },
+    { name: 'aron.PNG' },
+    { name: 'Laboratory.png' },
   ];
   const result = await current.adapter.attachReferences(payloads);
   assert.equal(result.attached, 2);
+  assert.equal(result.strategy, 'use-from-project');
   assert.deepEqual(current.page.state.references, ['Aron.png', 'Laboratory.png']);
 });
 
-test('attachReferences falls back to dropping files when Upload mounts no file input', async () => {
-  const page = createPage({ flowWithMissingUpload: true });
-  const result = await page.adapter.attachReferences([
-    { name: 'Dropped.png', mime: 'image/png', base64: Buffer.from('drop').toString('base64') },
-  ]);
+test('an exact project filename wins even when normalized basenames are ambiguous', async () => {
+  const result = await current.adapter.attachReferences([{ name: 'hero_sheet_v1.jpeg' }]);
   assert.equal(result.attached, 1);
-  assert.equal(result.strategy, 'drag-and-drop');
-  assert.deepEqual(page.page.state.references, ['Dropped.png']);
+  assert.deepEqual(current.page.state.references, ['hero_sheet_v1.jpeg']);
+});
+
+test('attachReferences reports ambiguous and missing project media instead of guessing', async () => {
+  await assert.rejects(current.adapter.attachReferences([{ name: 'hero_sheet.png' }]), (error) => {
+    assert.equal(error.code, 'REFERENCE_UPLOAD_FAILED');
+    assert.match(error.message, /ambiguous.*v1.*v2/i);
+    return true;
+  });
+  await assert.rejects(current.adapter.attachReferences([{ name: 'Unknown.png' }]), (error) => {
+    assert.equal(error.code, 'REFERENCE_UPLOAD_FAILED');
+    assert.match(error.message, /No project media matches "Unknown.png"/);
+    return true;
+  });
 });
 
 test('clearReferences removes every reference chip and reports none remaining', async () => {

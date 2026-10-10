@@ -1,24 +1,22 @@
 import { AutomationError, ERROR_CODES } from '../utils/errors.js';
-import { base64ToBytes } from '../utils/binary.js';
-import { clickElement, pressEscape, queryAllVisible, waitForValue } from './dom.js';
+import { accessibleName, clickElement, pressEscape, queryAllVisible, waitForValue } from './dom.js';
 import {
   findAddButton,
-  findFileInput,
   findOpenPopover,
+  findProjectMediaPicker,
   findPromptBox,
   findPromptRegion,
   findReferenceRemoveButtons,
-  findUploadMenuItem,
+  findUseFromProjectMenuItem,
+  readProjectMediaItems,
 } from './selectors.js';
 
 /**
  * Reference images for the current scene.
  *
- * Clearing: remove every attached reference chip until none remain, so a scene
- * only ever carries its own references.
- * Attaching: hand the file(s) to Flow's own file input and wait until Flow shows
- * the expected number of attachments. A count that never reaches the target is
- * reported as a failure, never as success.
+ * Reference files are uploaded to the Flow project once by the user. Per scene,
+ * the extension uses Flow's supported Add > Use from project picker. It never
+ * operates an OS file dialog or synthesises a file drop.
  */
 
 const MAX_CLEAR_ROUNDS = 25;
@@ -37,14 +35,11 @@ export function countAttachedReferences(doc, promptEl) {
   return Math.max(removeCount, thumbnails.length);
 }
 
-/**
- * @returns {Promise<{removed: number, remaining: number}>}
- */
+/** @returns {Promise<{removed: number, remaining: number}>} */
 export async function clearReferences(ctx) {
   const prompt = findPromptBox(ctx.doc);
-  if (!prompt) {
-    throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found.');
-  }
+  if (!prompt) throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found.');
+
   let removed = 0;
   for (let round = 0; round < MAX_CLEAR_ROUNDS; round += 1) {
     const buttons = findReferenceRemoveButtons(prompt.el);
@@ -57,130 +52,144 @@ export async function clearReferences(ctx) {
 }
 
 /**
- * Attach files to the prompt. Resolves with the number Flow confirmed.
- * @param {Array<{name: string, mime: string, base64: string}>} payloads
+ * Attach project media whose displayed names match the library filenames.
+ * Exact filename matches win. If there is no exact match, compare a
+ * case-insensitive basename with extension and trailing version removed.
+ * Missing and ambiguous names fail explicitly rather than choosing a tile.
+ *
+ * @param {Array<{name: string, mime?: string, base64?: string}>} payloads
  */
 export async function attachReferences(ctx, payloads) {
-  if (!payloads.length) return { attached: 0, expected: 0 };
+  if (!payloads.length) return { attached: 0, expected: 0, strategy: 'use-from-project' };
   const prompt = findPromptBox(ctx.doc);
-  if (!prompt) {
-    throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found.');
-  }
+  if (!prompt) throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found.');
 
-  let input = findFileInput(ctx.doc);
-  if (!input) {
-    const add = findAddButton(prompt.el);
-    if (!add) {
-      throw new AutomationError(
-        ERROR_CODES.REFERENCE_UPLOAD_FAILED,
-        'Could not find the "Add" control for uploads next to the prompt box.',
-      );
-    }
-    clickElement(add.el);
-    await ctx.sleep(ctx.timings.settleMs);
-    const item = findUploadMenuItem(ctx.doc);
-    if (item) {
-      clickElement(item.el);
-    }
-    input = await waitForValue(() => findFileInput(ctx.doc), { timeoutMs: ctx.timings.popoverMs, intervalMs: 100, sleep: ctx.sleep });
-    if (findOpenPopover(ctx.doc)) pressEscape(ctx.doc);
-    if (!input) {
-      // The current Flow composer opens the browser's native picker without
-      // leaving an <input type=file> in the DOM. Extensions cannot operate that
-      // OS dialog, but Flow's composer also accepts the same files by drop.
-      return attachReferencesByDrop(ctx, prompt.el, payloads);
-    }
-  }
-
-  const multiple = Boolean(input.multiple);
-  const batches = multiple ? [payloads] : payloads.map((payload) => [payload]);
   const baseline = countAttachedReferences(ctx.doc, prompt.el);
   let attached = 0;
 
-  for (const batch of batches) {
-    const transfer = new DataTransfer();
-    for (const payload of batch) {
-      transfer.items.add(new File([base64ToBytes(payload.base64)], payload.name, { type: payload.mime || 'image/png', lastModified: Date.now() }));
-    }
-    input.files = transfer.files;
-    const view = input.ownerDocument.defaultView;
-    input.dispatchEvent(new view.Event('input', { bubbles: true }));
-    input.dispatchEvent(new view.Event('change', { bubbles: true }));
-
-    const expected = baseline + attached + batch.length;
-    const confirmed = await waitForValue(() => countAttachedReferences(ctx.doc, prompt.el) >= expected, {
-      timeoutMs: ATTACH_TIMEOUT_MS,
-      intervalMs: 250,
-      sleep: ctx.sleep,
-    });
-    if (!confirmed) break;
-    attached += batch.length;
-  }
-  return { attached, expected: payloads.length };
-}
-
-async function attachReferencesByDrop(ctx, promptEl, payloads) {
-  const baseline = countAttachedReferences(ctx.doc, promptEl);
-  const transfer = makeTransfer(ctx.doc, payloads);
-  const region = findPromptRegion(promptEl);
-  const candidates = uniqueElements([
-    promptEl,
-    promptEl.closest?.('.base-prompt-box, flow-base-prompt-box'),
-    region,
-    ctx.doc.body,
-  ]);
-
-  for (const target of candidates) {
-    dispatchFileDrop(target, transfer);
-    const confirmed = await waitForValue(() => countAttachedReferences(ctx.doc, promptEl) >= baseline + payloads.length, {
-      timeoutMs: ATTACH_TIMEOUT_MS,
-      intervalMs: 250,
-      sleep: ctx.sleep,
-    });
-    if (confirmed) return { attached: payloads.length, expected: payloads.length, strategy: 'drag-and-drop' };
-
-    // If Flow accepted only part of a multi-file drop, do not risk duplicating
-    // it on another target. Report the observed count to the runner instead.
-    const observed = Math.max(0, countAttachedReferences(ctx.doc, promptEl) - baseline);
-    if (observed > 0) return { attached: observed, expected: payloads.length, strategy: 'drag-and-drop' };
-  }
-
-  throw new AutomationError(
-    ERROR_CODES.REFERENCE_UPLOAD_FAILED,
-    'Flow did not accept the reference files through its Upload control or by dropping them on the prompt box.',
-  );
-}
-
-function makeTransfer(doc, payloads) {
-  const view = doc.defaultView;
-  const Transfer = view?.DataTransfer ?? globalThis.DataTransfer;
-  const FileCtor = view?.File ?? globalThis.File;
-  const transfer = new Transfer();
   for (const payload of payloads) {
-    transfer.items.add(new FileCtor(
-      [base64ToBytes(payload.base64)],
-      payload.name,
-      { type: payload.mime || 'image/png', lastModified: Date.now() },
-    ));
-  }
-  return transfer;
-}
-
-function dispatchFileDrop(target, transfer) {
-  const view = target.ownerDocument.defaultView;
-  for (const type of ['dragenter', 'dragover', 'drop']) {
-    let event;
-    try {
-      event = new view.DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer: transfer });
-    } catch {
-      event = new view.Event(type, { bubbles: true, cancelable: true, composed: true });
-      Object.defineProperty(event, 'dataTransfer', { value: transfer });
+    const picker = await openProjectPicker(ctx, prompt.el);
+    const items = readProjectMediaItems(picker);
+    const match = matchProjectItem(payload.name, items);
+    if (match.error) {
+      await closePicker(ctx, picker);
+      throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, match.error);
     }
-    target.dispatchEvent(event);
+
+    clickElement(match.item.el);
+    await ctx.sleep(ctx.timings.settleMs);
+
+    // Some picker variants attach immediately. Others select a tile and wait
+    // for an Add/Attach/Done confirmation button.
+    let confirmed = countAttachedReferences(ctx.doc, prompt.el) >= baseline + attached + 1;
+    if (!confirmed) {
+      const confirm = findPickerConfirm(picker);
+      if (confirm) {
+        clickElement(confirm);
+        await ctx.sleep(ctx.timings.settleMs);
+      }
+      confirmed = await waitForValue(
+        () => countAttachedReferences(ctx.doc, prompt.el) >= baseline + attached + 1,
+        { timeoutMs: ATTACH_TIMEOUT_MS, intervalMs: 250, sleep: ctx.sleep },
+      );
+    }
+    await closePicker(ctx, picker);
+
+    if (!confirmed) {
+      throw new AutomationError(
+        ERROR_CODES.REFERENCE_UPLOAD_FAILED,
+        `Flow did not show a reference chip after selecting "${payload.name}" from the project.`,
+      );
+    }
+    attached += 1;
   }
+
+  return { attached, expected: payloads.length, strategy: 'use-from-project' };
 }
 
-function uniqueElements(elements) {
-  return elements.filter((element, index) => element && elements.indexOf(element) === index);
+async function openProjectPicker(ctx, promptEl) {
+  const open = findOpenPopover(ctx.doc);
+  if (open) {
+    pressEscape(ctx.doc);
+    await ctx.sleep(ctx.timings.settleMs);
+  }
+
+  const add = findAddButton(promptEl);
+  if (!add) {
+    throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, 'Could not find the "Add" control next to the Flow prompt box.');
+  }
+  clickElement(add.el);
+  await ctx.sleep(ctx.timings.settleMs);
+
+  // Some Flow variants open the project-media browser directly. Others first
+  // show a small menu containing "Use from project".
+  let picker = findProjectMediaPicker(ctx.doc);
+  if (!picker) {
+    const projectItem = await waitForValue(
+      () => findUseFromProjectMenuItem(ctx.doc),
+      { timeoutMs: ctx.timings.popoverMs, intervalMs: 100, sleep: ctx.sleep },
+    );
+    if (!projectItem) {
+      throw new AutomationError(
+        ERROR_CODES.REFERENCE_UPLOAD_FAILED,
+        'Flow did not show "Use from project" in the Add menu. Upload the references to this Flow project first.',
+      );
+    }
+    clickElement(projectItem.el);
+  }
+
+  picker ??= await waitForValue(
+    () => findProjectMediaPicker(ctx.doc),
+    { timeoutMs: ctx.timings.popoverMs * 2, intervalMs: 100, sleep: ctx.sleep },
+  );
+  if (!picker) {
+    throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, 'Flow did not open the project media picker.');
+  }
+  return picker;
 }
 
+function matchProjectItem(wanted, items) {
+  const exact = items.filter((item) => sameName(item.name, wanted));
+  if (exact.length === 1) return { item: exact[0] };
+  if (exact.length > 1) return { error: ambiguousMessage(wanted, exact) };
+
+  const wantedBase = comparableBasename(wanted);
+  const fallback = items.filter((item) => comparableBasename(item.name) === wantedBase);
+  if (fallback.length === 1) return { item: fallback[0] };
+  if (fallback.length > 1) return { error: ambiguousMessage(wanted, fallback) };
+
+  const available = items.map((item) => item.name).slice(0, 12);
+  return {
+    error: `No project media matches "${wanted}".${available.length ? ` Visible project items: ${available.join(', ')}.` : ' No named project items were visible.'}`,
+  };
+}
+
+function sameName(a, b) {
+  return String(a).trim().toLocaleLowerCase() === String(b).trim().toLocaleLowerCase();
+}
+
+function comparableBasename(value) {
+  return String(value)
+    .trim()
+    .replace(/^.*[\\/]/, '')
+    .replace(/\.[a-z0-9]{2,5}$/i, '')
+    .replace(/(?:[\s_.-]+(?:v|ver|version)\s*\d+|[\s_.-]+\d+)$/i, '')
+    .replace(/[\s_.-]+/g, '')
+    .toLocaleLowerCase();
+}
+
+function ambiguousMessage(wanted, matches) {
+  return `Project media "${wanted}" is ambiguous. Matches: ${matches.map((item) => item.name).join(', ')}.`;
+}
+
+function findPickerConfirm(picker) {
+  return queryAllVisible(picker, 'button, [role="button"]').find((el) =>
+    /^(?:add|attach|insert|use|select|done)(?:\s+\d+)?$/i.test(accessibleName(el)),
+  ) ?? null;
+}
+
+async function closePicker(ctx, picker) {
+  if (!picker?.isConnected) return;
+  pressEscape(ctx.doc);
+  await ctx.sleep(ctx.timings.settleMs);
+}

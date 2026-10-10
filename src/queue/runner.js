@@ -634,7 +634,7 @@ export class AutomationRunner {
         `Flow confirmed ${attached} of ${pluralize(payloads.length, 'reference file')} for Scene ${scene.numberLabel}.`,
       );
     }
-    await this.log('info', `Scene ${scene.numberLabel}: uploaded ${payloads.map((item) => item.name).join(', ')}.`, scene.id);
+    await this.log('info', `Scene ${scene.numberLabel}: attached from project: ${payloads.map((item) => item.name).join(', ')}.`, scene.id);
   }
 
   async stepInsert(scene) {

@@ -131,9 +131,24 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
     overlay.innerHTML = `
       <div role="menu" aria-label="Add">
         <button type="button" role="menuitem" id="upload-item">Upload image</button>
-        <button type="button" role="menuitem">Use from project</button>
+        <button type="button" role="menuitem" id="project-item">Use from project</button>
       </div>`;
     addBtn.setAttribute('aria-expanded', 'true');
+    overlay.querySelector('#project-item').addEventListener('click', () => {
+      overlay.innerHTML = `
+        <div role="dialog" aria-label="Project media">
+          <h3>Use from project</h3>
+          ${['Aron.png', 'Laboratory.png', 'Vex.png', 'Dropped.png', 'hero_sheet_v1.jpeg', 'hero_sheet_v2.jpeg']
+            .map((name) => `<button type="button" role="option" data-project-name="${name}" aria-label="${name}"><img alt="${name}" src="${PLACEHOLDER_IMAGE}">${name}</button>`)
+            .join('')}
+        </div>`;
+      for (const item of overlay.querySelectorAll('[data-project-name]')) {
+        item.addEventListener('click', () => {
+          addChip(item.dataset.projectName);
+          closePopover();
+        });
+      }
+    });
     overlay.querySelector('#upload-item').addEventListener('click', () => {
       if (flowWithMissingUpload) {
         closePopover();

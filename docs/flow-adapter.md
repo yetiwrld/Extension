@@ -8,7 +8,7 @@ talks to it through the commands listed in `src/shared/protocol.js`
 ## Status: not verified against the live Flow page
 
 The heuristics below were written from Google's public Flow help pages (the prompt box with
-the model name, Image/Video mode, Add → Upload, aspect ratio, Generate) and from common
+the model name, Image/Video mode, Add → Use from project, aspect ratio, Generate) and from common
 accessibility conventions. Flow requires a signed-in Google account, so the page could not
 be inspected while this code was written. Treat every row as an assumption until it passes
 the checklist at the end of this document.
@@ -26,8 +26,8 @@ the live page matches.
 | Settings control | Button in the prompt region with `aria-haspopup` or `aria-expanded`, or a model-like name. | "Could not find the model/settings control." | `findSettingsTrigger` |
 | Settings options | Options inside an open menu, dialog or listbox. Grouped by the nearest heading (Mode, Model, Aspect ratio). Options are classified by group, then by shape (`16:9`). | Empty or wrong option lists; setting not found | `readPopoverOptions`, `classifySettingOption` |
 | Agent switch | Control named "Agent" with `aria-checked` or `aria-pressed`. | Agent state not detected | `findAgentToggle` |
-| Add / Upload | Button named Add, Upload or Attach near the prompt. Menu item named Upload. Then a file input. | "Could not find the Add control" or "did not open a file picker" | `findAddButton`, `findUploadMenuItem`, `findFileInput` |
-| Reference chips | Remove buttons named Remove, Delete, Clear or Close inside the prompt region, plus thumbnails of 24–160 px. | Upload never confirmed → `REFERENCE_UPLOAD_FAILED`; leftovers → `REFERENCE_CLEAR_FAILED` | `countAttachedReferences`, `findReferenceRemoveButtons` |
+| Project media | Add control near the prompt, then an item named "Use from project". Picker tiles are read from accessible names, titles, image alt text or visible text. | Project picker missing, named item missing or ambiguous → `REFERENCE_UPLOAD_FAILED` | `findAddButton`, `findUseFromProjectMenuItem`, `findProjectMediaPicker`, `readProjectMediaItems` |
+| Reference chips | Remove buttons named Remove, Delete, Clear or Close inside the prompt region, plus thumbnails of 24–160 px. | Attachment never confirmed → `REFERENCE_UPLOAD_FAILED`; leftovers → `REFERENCE_CLEAR_FAILED` | `countAttachedReferences`, `findReferenceRemoveButtons` |
 | Outputs | `img` and `video` elements at least 96×96 px, outside the prompt region and menus. Key = `src`. | New output never seen → generation times out (fails safely) | `findOutputMedia` |
 | In progress | `[role="progressbar"]` or `[aria-busy="true"]` outside the prompt region. | Completion too early if a generation shows no indicator; never completes if an unrelated spinner stays on screen | `findProgressIndicators` |
 | Failure | Text of a `[role="alert"]` that was not on the page before submission. | Failure not reported → times out instead of failing fast | `findAlertTexts` |
