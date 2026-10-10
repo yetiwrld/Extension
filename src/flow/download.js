@@ -153,8 +153,18 @@ function findCardMenuButton(card) {
     const name = normalizeText(`${accessibleName(el)} ${el.getAttribute('title') ?? ''} ${el.getAttribute('data-testid') ?? ''}`);
     const text = normalizeText(el.textContent);
     return /\b(more|menu|actions?|options?|overflow)\b/i.test(name)
-      || /^(?:⋮|\.\.\.|···|⋯)$/.test(text);
-  }) ?? buttons.find((el) => el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().width < 56 && el.querySelector('svg, mat-icon')) ?? null;
+      || /^(?:⋮|\.\.\.|···|⋯|more[_\s-]?(?:vert|horiz))$/i.test(text)
+      || isThreeDotIcon(el);
+  }) ?? null;
+}
+
+function isThreeDotIcon(el) {
+  const svg = el.querySelector('svg');
+  if (!svg) return false;
+  // Three separate circles are unambiguously an overflow menu. Never use the
+  // old "any small SVG button" fallback: Flow's Save to project control is also
+  // a small icon button and clicking it performs the wrong action.
+  return svg.querySelectorAll('circle').length >= 3;
 }
 
 function findDownloadMenuItem(doc) {

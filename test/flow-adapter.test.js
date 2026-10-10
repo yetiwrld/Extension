@@ -402,6 +402,18 @@ test('finds Flow download rows even when the open menu uses plain divs without A
   assert.deepEqual(current.page.state.downloads, [1]);
 });
 
+test('never mistakes Flow\'s Save to project icon for the three-dot image menu', async () => {
+  await current.adapter.insertPrompt('Choose only the overflow menu.');
+  const baseline = await current.adapter.snapshotOutputs();
+  await current.adapter.submit();
+  current.page.finishGeneration({ downloadVariant: 'ambiguous-icons' });
+  const done = await current.adapter.generationStatus(baseline);
+
+  await current.adapter.downloadLatest2k({ outputKeys: done.outputKeys });
+  assert.deepEqual(current.page.state.downloads, [1]);
+  assert.deepEqual(current.page.state.savedToProject, []);
+});
+
 test('requests a trusted hover when Flow keeps 2K in a second hover-only submenu', async () => {
   await current.adapter.insertPrompt('Nested submenu output.');
   const baseline = await current.adapter.snapshotOutputs();

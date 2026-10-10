@@ -41,6 +41,7 @@ export function installFlowFixture(window, {
     alerts: [],
     submitted: [],
     downloads: [],
+    savedToProject: [],
   };
 
   doc.body.innerHTML = `
@@ -259,9 +260,13 @@ export function installFlowFixture(window, {
     };
     const control = doc.createElement('button');
     control.type = 'button';
-    if (['menu', 'plain-menu', 'trusted-submenu'].includes(downloadVariant)) {
-      control.setAttribute('aria-label', 'More actions');
-      control.textContent = '⋮';
+    if (['menu', 'plain-menu', 'trusted-submenu', 'ambiguous-icons'].includes(downloadVariant)) {
+      if (downloadVariant === 'ambiguous-icons') {
+        control.innerHTML = '<svg><circle></circle><circle></circle><circle></circle></svg>';
+      } else {
+        control.setAttribute('aria-label', 'More actions');
+        control.textContent = '⋮';
+      }
       control.addEventListener('click', () => {
         overlay.innerHTML = downloadVariant === 'plain-menu'
           ? '<div class="floating-menu"><div class="download-row">Download image</div></div>'
@@ -275,7 +280,15 @@ export function installFlowFixture(window, {
       control.textContent = 'Download media';
       control.addEventListener('click', showQuality);
     }
-    card.append(img, control);
+    if (downloadVariant === 'ambiguous-icons') {
+      const save = doc.createElement('button');
+      save.type = 'button';
+      save.innerHTML = '<svg><path d="save-project-icon"></path></svg>';
+      save.addEventListener('click', () => state.savedToProject.push(outputNumber));
+      card.append(img, save, control);
+    } else {
+      card.append(img, control);
+    }
     resultsEl.appendChild(card);
   }
 
