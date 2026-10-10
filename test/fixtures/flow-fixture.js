@@ -143,16 +143,17 @@ export function installFlowFixture(window, { variant = 'textarea', flowWithMissi
             .join('')}
           <button type="button" id="add-to-prompt">Add to prompt</button>
         </div>`;
-      let selectedProjectName = null;
+      const selectedProjectNames = new Set();
       for (const item of overlay.querySelectorAll('[data-project-name]')) {
         item.addEventListener('click', () => {
-          overlay.querySelectorAll('[data-project-name]').forEach((other) => other.setAttribute('aria-selected', 'false'));
-          item.setAttribute('aria-selected', 'true');
-          selectedProjectName = item.dataset.projectName;
+          const selected = item.getAttribute('aria-selected') !== 'true';
+          item.setAttribute('aria-selected', selected ? 'true' : 'false');
+          if (selected) selectedProjectNames.add(item.dataset.projectName);
+          else selectedProjectNames.delete(item.dataset.projectName);
         });
       }
       overlay.querySelector('#add-to-prompt').addEventListener('click', () => {
-        if (selectedProjectName) addChip(selectedProjectName);
+        for (const name of selectedProjectNames) addChip(name);
         closePopover();
       });
     });

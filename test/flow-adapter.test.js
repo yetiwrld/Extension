@@ -206,7 +206,7 @@ test('attachReferences uses Add > Use from project and confirms each chip', asyn
   ];
   const result = await current.adapter.attachReferences(payloads);
   assert.equal(result.attached, 2);
-  assert.equal(result.strategy, 'use-from-project');
+  assert.equal(result.strategy, 'use-from-project-multiselect');
   assert.deepEqual(current.page.state.references, ['Aron.png', 'Laboratory.png']);
 });
 

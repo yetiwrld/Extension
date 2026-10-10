@@ -69,58 +69,53 @@ export async function attachReferences(ctx, payloads) {
   if (!prompt) throw new AutomationError(ERROR_CODES.FLOW_UI_CHANGED, 'Flow prompt box not found.');
 
   const baseline = countAttachedReferences(ctx.doc, prompt.el);
-  let attached = 0;
+  const picker = await openProjectPicker(ctx, prompt.el);
+  const search = findPickerSearch(picker);
 
+  // Flow's supported picker is multi-select. Select every scene ingredient in
+  // this one picker session, then press Add to prompt once. Reopening Add after
+  // the first ingredient is unreliable because Flow changes the composer DOM.
   for (const payload of payloads) {
-    const picker = await openProjectPicker(ctx, prompt.el);
+    if (search) {
+      setControlledValue(search, payload.name);
+      await ctx.sleep(ctx.timings.settleMs);
+    }
     let items = readProjectMediaItems(picker);
     let match = matchProjectItem(payload.name, items);
-
-    // Project grids are virtualized, so an item below the fold may not exist in
-    // the DOM yet. Use Flow's own picker search before declaring it missing.
-    if (match.missing) {
-      const search = findPickerSearch(picker);
-      if (search) {
-        setControlledValue(search, payload.name);
-        await ctx.sleep(ctx.timings.settleMs);
-        items = readProjectMediaItems(picker);
-        match = matchProjectItem(payload.name, items);
-      }
+    if (match.missing && search) {
+      await ctx.sleep(ctx.timings.settleMs);
+      items = readProjectMediaItems(picker);
+      match = matchProjectItem(payload.name, items);
     }
     if (match.error) {
       await closePicker(ctx, picker);
       throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, match.error);
     }
-
     clickElement(match.item.el);
     await ctx.sleep(ctx.timings.settleMs);
-
-    // Some picker variants attach immediately. Others select a tile and wait
-    // for an Add/Attach/Done confirmation button.
-    let confirmed = referenceWasAttached(ctx.doc, prompt.el, payload.name, baseline + attached + 1, picker);
-    if (!confirmed) {
-      const confirm = findPickerConfirm(picker, ctx.doc);
-      if (confirm) {
-        clickElement(confirm);
-        await ctx.sleep(ctx.timings.settleMs);
-      }
-      confirmed = await waitForValue(
-        () => referenceWasAttached(ctx.doc, prompt.el, payload.name, baseline + attached + 1, picker),
-        { timeoutMs: ATTACH_TIMEOUT_MS, intervalMs: 250, sleep: ctx.sleep },
-      );
-    }
-    await closePicker(ctx, picker);
-
-    if (!confirmed) {
-      throw new AutomationError(
-        ERROR_CODES.REFERENCE_UPLOAD_FAILED,
-        `Flow did not show a reference chip after selecting "${payload.name}" from the project.`,
-      );
-    }
-    attached += 1;
   }
 
-  return { attached, expected: payloads.length, strategy: 'use-from-project' };
+  const confirm = findPickerConfirm(picker, ctx.doc);
+  if (!confirm) {
+    await closePicker(ctx, picker);
+    throw new AutomationError(ERROR_CODES.REFERENCE_UPLOAD_FAILED, 'Flow did not show the "Add to prompt" button after selecting the project references.');
+  }
+  clickElement(confirm);
+  await ctx.sleep(ctx.timings.settleMs);
+
+  const confirmed = await waitForValue(
+    () => countAttachedReferences(ctx.doc, prompt.el) >= baseline + payloads.length || !picker.isConnected || !isVisible(picker),
+    { timeoutMs: ATTACH_TIMEOUT_MS, intervalMs: 250, sleep: ctx.sleep },
+  );
+  await closePicker(ctx, picker);
+  if (!confirmed) {
+    throw new AutomationError(
+      ERROR_CODES.REFERENCE_UPLOAD_FAILED,
+      `Flow did not accept ${payloads.length} selected project ${payloads.length === 1 ? 'reference' : 'references'} after clicking "Add to prompt".`,
+    );
+  }
+
+  return { attached: payloads.length, expected: payloads.length, strategy: 'use-from-project-multiselect' };
 }
 
 async function openProjectPicker(ctx, promptEl) {
@@ -219,28 +214,6 @@ function findPickerConfirm(picker, doc) {
   return queryAllVisible(picker, 'button, [role="button"]').find((el) =>
     /^(?:add|attach|insert|use|select|done)(?:\s+(?:\d+|selected|item(?:s)?))?$/i.test(accessibleName(el)),
   ) ?? null;
-}
-
-function referenceWasAttached(doc, promptEl, wanted, expectedCount, picker) {
-  if (countAttachedReferences(doc, promptEl) >= expectedCount) return true;
-  // Flow's current ingredient chip does not expose a filename, thumbnail or
-  // Remove label that our counter can read. Closing the project picker after
-  // the explicit "Add to prompt" press is still direct UI evidence that Flow
-  // accepted the selected item. A disabled/no-op press leaves it open.
-  if (!picker?.isConnected || !isVisible(picker)) return true;
-  const region = findPromptRegion(promptEl);
-  if (!region) return false;
-  const wantedName = comparableFilename(wanted);
-  return Array.from(region.querySelectorAll('[aria-label], [title], img[alt], [class*="ingredient" i], [class*="reference" i]')).some((el) => {
-    // Ignore controls that launch the ingredient picker rather than attached chips.
-    if (el === promptEl || /\badd ingredients?\b/i.test(accessibleName(el))) return false;
-    const shown = el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('alt') || el.textContent || '';
-    return comparableFilename(shown) === wantedName || comparableFilename(shown.replace(/(?:image|video)$/i, '')) === wantedName;
-  });
-}
-
-function comparableFilename(value) {
-  return String(value).trim().replace(/^.*[\\/]/, '').replace(/\s+(?:image|video)$/i, '').toLocaleLowerCase();
 }
 
 async function closePicker(ctx, picker) {
