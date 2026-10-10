@@ -90,6 +90,12 @@ export function findPromptRegion(promptEl) {
 export function findGenerateButton(doc, promptEl) {
   const region = findPromptRegion(promptEl);
   if (region) {
+    const exact = queryAllVisible(
+      region,
+      'flow-generate-icon-button button[aria-label="Start generation"], flow-generate-icon-button button.generate-icon-button, flow-generate-icon-button button[type="submit"], button[aria-label="Start generation"]',
+    );
+    if (exact.length) return { el: exact[exact.length - 1], strategy: 'generate-flow-component-button' };
+
     const nearby = queryAllVisible(region, 'button, [role="button"]').filter((button) => GENERATE_NAME.test(accessibleName(button)));
     if (nearby.length) return { el: nearby[nearby.length - 1], strategy: 'generate-in-prompt-region' };
 

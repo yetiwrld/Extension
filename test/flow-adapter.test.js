@@ -89,7 +89,7 @@ test('prefers Flow\'s real Start generation button over its icon component', asy
 
   const probe = await current.adapter.probe();
   assert.equal(probe.generateFound, true);
-  assert.equal(probe.generateStrategy, 'generate-in-prompt-region');
+  assert.equal(probe.generateStrategy, 'generate-flow-component-button');
 });
 
 test('probe reports Agent as on when its switch is on', async () => {

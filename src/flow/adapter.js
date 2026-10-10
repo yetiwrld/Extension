@@ -23,7 +23,7 @@ import { accessibleName, clickElement, normalizeText, readEditableText } from '.
  * All failures are AutomationError with a stable code.
  */
 
-export const ADAPTER_VERSION = '1.5.0';
+export const ADAPTER_VERSION = '1.5.1';
 
 export const DEFAULT_TIMINGS = Object.freeze({
   settleMs: 350,

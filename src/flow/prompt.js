@@ -21,7 +21,9 @@ export async function insertPrompt(ctx, text) {
   } else {
     replaceEditableText(prompt.el, text);
   }
-  await ctx.sleep(ctx.timings.settleMs);
+  // Give ProseMirror and Angular change detection time to commit the editor
+  // transaction and enable Flow's Start generation button.
+  await ctx.sleep(Math.max(ctx.timings.settleMs, 1000));
 
   let readBack = readEditableText(prompt.el);
   let verified = normalizeText(readBack) === normalizeText(text);

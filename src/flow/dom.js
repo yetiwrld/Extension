@@ -124,9 +124,26 @@ export function replaceEditableText(el, text) {
     inserted = false;
   }
   if (!inserted || normalizeText(el.textContent) !== normalizeText(text)) {
+    try {
+      el.dispatchEvent(new doc.defaultView.InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: text,
+      }));
+    } catch {
+      // Older Chromium builds may not construct InputEvent with inputType.
+    }
     el.textContent = text;
-    el.dispatchEvent(new doc.defaultView.InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
   }
+
+  // Flow's ProseMirror editor is wrapped by an Angular form. Visible text alone
+  // is insufficient: Angular updates generation readiness from these events.
+  el.dispatchEvent(new doc.defaultView.InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  el.dispatchEvent(new doc.defaultView.Event('change', { bubbles: true, cancelable: true }));
+  const keyInit = { key: 'Unidentified', code: '', bubbles: true, cancelable: true };
+  el.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown', keyInit));
+  el.dispatchEvent(new doc.defaultView.KeyboardEvent('keyup', keyInit));
 }
 
 export function readEditableText(el) {
